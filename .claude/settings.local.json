@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/soham/Projects/sensybull-api -name *.env* -o -name .git*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:edgartools.readthedocs.io)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"from edgar import Company; c = Company\\(''AAPL''\\); print\\([a for a in dir\\(c.data\\) if not a.startswith\\(''_''\\)]\\)\")",
+      "Bash(pip show:*)",
+      "Bash(python scripts/debug_8k.py)",
+      "Bash(python scripts/stream_8k_filings.py)"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required
+from marshmallow import ValidationError
+from app import db
+from app.models.company import Company
+from app.utils.schemas import CompanySchema, CompanyCreateSchema
+
+companies_bp = Blueprint('companies', __name__)
+company_schema = CompanySchema()
+companies_schema = CompanySchema(many=True)
+create_schema = CompanyCreateSchema()
+
+
+@companies_bp.route('/', methods=['GET'])
+@jwt_required()
+def get_companies():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    ticker = request.args.get('ticker')
+    query = Company.query
+    if ticker:
+        query = query.filter(Company.ticker.ilike(f'%{ticker}%'))
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+    return jsonify({
+        'companies': companies_schema.dump(pagination.items),
+        'total': pagination.total,
+        'page': page,
+        'per_page': per_page
+    })
+
+
+@companies_bp.route('/<company_id>', methods=['GET'])
+@jwt_required()
+def get_company(company_id):
+    company = Company.query.get_or_404(company_id)
+    return jsonify({'company': company_schema.dump(company)})
+
+
+@companies_bp.route('/', methods=['POST'])
+@jwt_required()
+def create_company():
+    try:
+        data = create_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify({'error': 'Validation error', 'details': e.messages}), 400
+
+    company = Company(**data)
+    try:
+        db.session.add(company)
+        db.session.commit()
+        return jsonify({'message': 'Company created', 'company': company_schema.dump(company)}), 201
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create company'}), 500
+
+
+@companies_bp.route('/<company_id>', methods=['PUT'])
+@jwt_required()
+def update_company(company_id):
+    company = Company.query.get_or_404(company_id)
+    try:
+        data = create_schema.load(request.json, partial=True)
+    except ValidationError as e:
+        return jsonify({'error': 'Validation error', 'details': e.messages}), 400
+    for field, value in data.items():
+        setattr(company, field, value)
+    try:
+        db.session.commit()
+        return jsonify({'message': 'Company updated', 'company': company_schema.dump(company)})
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update company'}), 500
+
+
+@companies_bp.route('/<company_id>', methods=['DELETE'])
+@jwt_required()
+def delete_company(company_id):
+    company = Company.query.get_or_404(company_id)
+    try:
+        db.session.delete(company)
+        db.session.commit()
+        return jsonify({'message': 'Company deleted'})
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete company'}), 500
