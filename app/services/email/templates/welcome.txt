@@ -1,0 +1,12 @@
+Welcome to {{ app_name }}, {{ user_name }}!
+
+Your account is ready. {{ app_name }} helps you track companies,
+watchlists, and SEC filings in one place.
+
+Open your dashboard:
+{{ dashboard_url }}
+
+Questions or feedback? Just reply to this email - we read every message.
+
+-- {{ app_name }}
+Need help? {{ support_email }}

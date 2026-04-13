@@ -3,12 +3,15 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from config import Config
 from sqlalchemy import event
 
 db = SQLAlchemy()
 migrate = Migrate()
 jwt = JWTManager()
+limiter = Limiter(key_func=get_remote_address)
 
 
 def create_app(config_class=Config):
@@ -19,7 +22,12 @@ def create_app(config_class=Config):
     migrate.init_app(app, db)
     jwt.init_app(app)
     CORS(app)
+    limiter.init_app(app)
     app.url_map.strict_slashes = False
+
+    # Register the transactional mail client.
+    from app.services.email import get_mail_client
+    app.extensions['mail'] = get_mail_client(app.config)
 
     if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
         with app.app_context():
