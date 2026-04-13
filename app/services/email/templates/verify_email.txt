@@ -1,0 +1,13 @@
+Hi {{ user_name }},
+
+Thanks for signing up for {{ app_name }}. Please confirm this email address
+so we can secure your account and send you important updates.
+
+Verify your email:
+{{ verify_url }}
+
+This link expires in {{ expires_hours }} hour{{ 's' if expires_hours != 1 else '' }}. If you didn't create an account,
+you can ignore this message.
+
+-- {{ app_name }}
+Need help? {{ support_email }}

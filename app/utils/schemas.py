@@ -7,6 +7,8 @@ class UserSchema(Schema):
     email = fields.Email(required=True)
     phone_number = fields.Str(validate=validate.Length(max=20))
     is_admin = fields.Bool(dump_only=True)
+    email_verified = fields.Bool(dump_only=True)
+    email_verified_at = fields.DateTime(dump_only=True)
     created_at = fields.DateTime(dump_only=True)
     watchlists = fields.List(fields.Nested('WatchlistSchema', exclude=('user', 'companies')), dump_only=True)
 
@@ -20,6 +22,24 @@ class UserRegistrationSchema(Schema):
 class UserLoginSchema(Schema):
     email = fields.Email(required=True)
     password = fields.Str(required=True)
+
+
+class EmailOnlySchema(Schema):
+    email = fields.Email(required=True)
+
+
+class TokenSchema(Schema):
+    token = fields.Str(required=True, validate=validate.Length(min=16, max=128))
+
+
+class ResetPasswordSchema(Schema):
+    token = fields.Str(required=True, validate=validate.Length(min=16, max=128))
+    new_password = fields.Str(required=True, validate=validate.Length(min=6))
+
+
+class ChangePasswordSchema(Schema):
+    current_password = fields.Str(required=True)
+    new_password = fields.Str(required=True, validate=validate.Length(min=6))
 
 
 class CompanySchema(Schema):

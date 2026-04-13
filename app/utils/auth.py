@@ -21,6 +21,31 @@ def admin_required(f):
     return decorated
 
 
+def email_verified_required(f):
+    """Require the current JWT user to have a verified email.
+
+    Apply to routes that shouldn't be accessible until the user has
+    confirmed email ownership (e.g. payments, sensitive profile changes).
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        try:
+            verify_jwt_in_request()
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            if not user:
+                return jsonify({'error': 'User not found'}), 404
+            if not user.email_verified:
+                return jsonify({
+                    'error': 'Email not verified',
+                    'code': 'email_not_verified',
+                }), 403
+            return f(*args, **kwargs)
+        except Exception:
+            return jsonify({'error': 'Token is invalid'}), 401
+    return decorated
+
+
 def get_current_user():
     try:
         verify_jwt_in_request()
