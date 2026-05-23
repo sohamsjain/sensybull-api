@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: ./services/api
+    ports:
+      - "5000:5000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    env_file:
+      - ./services/api/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/api:/app
+    command: python main.py
+
+  ingest:
+    build: ./services/ingest
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    env_file:
+      - ./services/ingest/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/ingest:/app
+    command: uvicorn server:app --host 0.0.0.0 --port 8000
+
+networks:
+  default:
+    name: sensybull-net

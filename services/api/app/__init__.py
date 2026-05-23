@@ -7,6 +7,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from config import Config
 from sqlalchemy import event
+from app.services.realtime.socketio_setup import socketio
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -23,6 +24,7 @@ def create_app(config_class=Config):
     jwt.init_app(app)
     CORS(app)
     limiter.init_app(app)
+    socketio.init_app(app)
     app.url_map.strict_slashes = False
 
     # Register the transactional mail client.
@@ -42,14 +44,20 @@ def create_app(config_class=Config):
     from app.routes.companies import companies_bp
     from app.routes.watchlists import watchlists_bp
     from app.routes.filings import filings_bp
+    from app.routes.events import events_bp
 
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(users_bp, url_prefix='/users')
     app.register_blueprint(companies_bp, url_prefix='/companies')
     app.register_blueprint(watchlists_bp, url_prefix='/watchlists')
     app.register_blueprint(filings_bp, url_prefix='/filings')
+    app.register_blueprint(events_bp, url_prefix='/events')
 
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)
+
+    # Start Redis subscriber (no-op if already running in this process)
+    from app.services.realtime.subscriber import start_subscriber
+    start_subscriber(app, socketio)
 
     return app

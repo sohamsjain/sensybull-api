@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>8-K Live Feed</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #17191f;
+      --surface2:  #1e2029;
+      --border:    #2a2d38;
+      --border2:   #363a48;
+      --text:      #e8eaf0;
+      --text2:     #9da3b4;
+      --text3:     #636878;
+      --accent:    #5b7bff;
+      --green:     #34d399;
+      --red:       #f87171;
+      --yellow:    #fbbf24;
+
+      /* tier palette */
+      --t1-bg:     rgba(248, 113, 113, 0.10);
+      --t1-border: rgba(248, 113, 113, 0.30);
+      --t1-text:   #f87171;
+
+      --t2-bg:     rgba(251, 191, 36, 0.09);
+      --t2-border: rgba(251, 191, 36, 0.28);
+      --t2-text:   #fbbf24;
+
+      --t3-bg:     rgba(99, 104, 120, 0.10);
+      --t3-border: rgba(99, 104, 120, 0.22);
+      --t3-text:   #9da3b4;
+
+      --radius-sm: 2px;
+      --radius:    4px;
+      --radius-lg: 6px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(15, 17, 23, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--accent);
+      border-radius: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .logo-text {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    .logo-sub {
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--text3);
+      margin-left: 2px;
+    }
+
+    .divider { width: 1px; height: 20px; background: var(--border2); flex-shrink: 0; }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 12px 4px 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text2);
+      transition: border-color 0.3s;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text3);
+      flex-shrink: 0;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .dot.connected    { background: var(--green); box-shadow: 0 0 8px rgba(52, 211, 153, 0.5); }
+    .dot.connecting   { background: var(--yellow); animation: blink 1.1s ease-in-out infinite; }
+    .dot.disconnected { background: var(--red); }
+
+    @keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.2 } }
+
+    .header-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .count-badge {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text3);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 3px 10px;
+    }
+
+    /* ── Feed ───────────────────────────────────────────────────────────── */
+
+    .feed {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 28px 20px 64px;
+    }
+
+    /* ── Empty state ────────────────────────────────────────────────────── */
+
+    .empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 100px 24px;
+      text-align: center;
+      color: var(--text3);
+    }
+
+    .empty-pulse {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 2px solid var(--border2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      margin-bottom: 20px;
+      animation: pulse 2.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(91, 123, 255, 0.15); }
+      50%      { box-shadow: 0 0 0 14px rgba(91, 123, 255, 0); }
+    }
+
+    .empty-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text2);
+      margin-bottom: 6px;
+    }
+
+    .empty-sub {
+      font-size: 13px;
+      max-width: 300px;
+      line-height: 1.7;
+    }
+
+    /* ── Card ───────────────────────────────────────────────────────────── */
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 14px;
+      overflow: hidden;
+      animation: slideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: border-color 0.15s;
+    }
+
+    .card:hover { border-color: var(--border2); }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(-12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Card header bar ────────────────────────────────────────────────── */
+
+    .card-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 16px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      font-size: 11.5px;
+      color: var(--text3);
+    }
+
+    .new-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(91, 123, 255, 0.6);
+      flex-shrink: 0;
+    }
+
+    .new-label {
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .bar-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--border2); flex-shrink: 0; }
+    .bar-time { color: var(--text3); }
+    .bar-filed { margin-left: auto; color: var(--text3); }
+
+    /* ── Card body ──────────────────────────────────────────────────────── */
+
+    .card-body { padding: 18px 20px; }
+
+    .company-row {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .company-name {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      line-height: 1.2;
+    }
+
+    .ticker-badge {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      background: rgba(91, 123, 255, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(91, 123, 255, 0.3);
+      padding: 2px 8px;
+      border-radius: 5px;
+    }
+
+    .exchange-badge {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text3);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 5px;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--text3);
+      margin-bottom: 18px;
+    }
+
+    .meta-row a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .meta-row a:hover { text-decoration: underline; }
+
+    /* ── Section label ──────────────────────────────────────────────────── */
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 10px;
+    }
+
+    /* ── Items ──────────────────────────────────────────────────────────── */
+
+    .items { margin-bottom: 18px; }
+
+    .item {
+      border-radius: var(--radius-sm);
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+
+    .t1 { background: var(--t1-bg); border: 1px solid var(--t1-border); }
+    .t2 { background: var(--t2-bg); border: 1px solid var(--t2-border); }
+    .t3 { background: var(--t3-bg); border: 1px solid var(--t3-border); }
+
+    .item-hd {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .item-hd:hover { filter: brightness(1.08); }
+
+    .item-num {
+      font-size: 11px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 28px;
+    }
+
+    .item-cat {
+      font-size: 12.5px;
+      font-weight: 600;
+      min-width: 140px;
+    }
+
+    .t1 .item-num, .t1 .item-cat { color: var(--t1-text); }
+    .t2 .item-num, .t2 .item-cat { color: var(--t2-text); }
+    .t3 .item-num, .t3 .item-cat { color: var(--t3-text); }
+
+    .item-title {
+      font-size: 12px;
+      color: var(--text3);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chevron {
+      font-size: 10px;
+      color: var(--text3);
+      margin-left: auto;
+      flex-shrink: 0;
+      transition: transform 0.18s;
+    }
+    .item.open .chevron { transform: rotate(180deg); }
+
+    .item-body {
+      display: none;
+      padding: 14px 16px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      font-size: 13px;
+      color: var(--text2);
+      line-height: 1.8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .item.open .item-body { display: block; }
+
+    /* ── Briefing ──────────────────────────────────────────────────────── */
+
+    .briefing {
+      background: rgba(91, 123, 255, 0.06);
+      border: 1px solid rgba(91, 123, 255, 0.18);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      margin-bottom: 18px;
+    }
+
+    .briefing-headline {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
+
+    .briefing-bullets {
+      list-style: none;
+      margin-bottom: 10px;
+    }
+
+    .briefing-bullets li {
+      font-size: 13px;
+      color: var(--text2);
+      line-height: 1.7;
+      padding-left: 16px;
+      position: relative;
+      margin-bottom: 4px;
+    }
+
+    .briefing-bullets li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .briefing-context {
+      font-size: 12px;
+      color: var(--text3);
+      font-style: italic;
+      line-height: 1.6;
+    }
+
+    /* ── Exhibits ───────────────────────────────────────────────────────── */
+
+    .ex-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .ex-row:last-child { border-bottom: none; }
+
+    .ex-type {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      min-width: 80px;
+      text-align: center;
+    }
+
+    .ex-desc {
+      color: var(--text3);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ex-link {
+      font-size: 11.5px;
+      font-weight: 500;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex-shrink: 0;
+    }
+    .ex-link:hover { text-decoration: underline; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────────── */
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">📋</div>
+    <span class="logo-text">8-K Feed</span>
+    <span class="logo-sub">SEC EDGAR</span>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="status-pill">
+    <div class="dot connecting" id="dot"></div>
+    <span id="status-text">Connecting…</span>
+  </div>
+
+  <div class="header-right">
+    <span class="count-badge" id="count" style="display:none"></span>
+  </div>
+</header>
+
+<main class="feed" id="feed">
+  <div class="empty" id="empty">
+    <div class="empty-pulse">📡</div>
+    <div class="empty-title">Waiting for filings</div>
+    <div class="empty-sub">New 8-K filings from SEC EDGAR will appear here in real time.</div>
+  </div>
+</main>
+
+<script>
+  const WS_URL = 'ws://localhost:8000/ws';
+  let total = 0;
+  let retryDelay = 1500;
+
+  function connect() {
+    const dot  = document.getElementById('dot');
+    const text = document.getElementById('status-text');
+
+    dot.className    = 'dot connecting';
+    text.textContent = 'Connecting…';
+
+    const ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      dot.className    = 'dot connected';
+      text.textContent = 'Live';
+      retryDelay = 1500;
+    };
+
+    ws.onmessage = ({ data }) => {
+      try { render(JSON.parse(data)); } catch (e) { console.error(e); }
+    };
+
+    ws.onclose = () => {
+      const s = retryDelay / 1000;
+      dot.className    = 'dot disconnected';
+      text.textContent = `Reconnecting in ${s}s…`;
+      setTimeout(() => { retryDelay = Math.min(retryDelay * 2, 30000); connect(); }, retryDelay);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  const TIER = { 1: 't1', 2: 't2', 3: 't3' };
+
+  function fmt(iso) {
+    try {
+      return new Date(iso).toLocaleString(undefined, {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+      });
+    } catch { return iso; }
+  }
+
+  function timeOnly(d) {
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function esc(v) {
+    return String(v ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function render(f) {
+    document.getElementById('empty')?.remove();
+
+    total++;
+    const countEl = document.getElementById('count');
+    countEl.style.display = '';
+    countEl.textContent = `${total} filing${total === 1 ? '' : 's'}`;
+
+    const b = f.briefing;
+    const briefingHtml = b && b.headline ? `
+      <div class="briefing">
+        <div class="briefing-headline">${esc(b.headline)}</div>
+        ${(b.bullets ?? []).length ? `<ul class="briefing-bullets">${b.bullets.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
+        ${b.company_context ? `<div class="briefing-context">${esc(b.company_context)}</div>` : ''}
+      </div>` : '';
+
+    const itemsHtml = (f.items ?? []).map(it => {
+      const tc  = TIER[it.tier] ?? 't3';
+      const has = it.text?.trim();
+      return `
+        <div class="item ${tc}">
+          <div class="item-hd" onclick="toggle(this.parentElement)">
+            <span class="item-num">${esc(it.number)}</span>
+            <span class="item-cat">${esc(it.category)}</span>
+            <span class="item-title">${esc(it.title)}</span>
+            ${has ? '<span class="chevron">▼</span>' : ''}
+          </div>
+          ${has ? `<div class="item-body">${esc(it.text)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const exHtml = (f.exhibits ?? []).map(ex => `
+      <div class="ex-row">
+        <span class="ex-type">${esc(ex.type)}</span>
+        <span class="ex-desc" title="${esc(ex.description)}">${esc(ex.description) || '—'}</span>
+        <a class="ex-link" href="${esc(ex.url)}" target="_blank" rel="noopener">
+          Open ↗
+        </a>
+      </div>`).join('');
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-bar">
+        <div class="new-dot"></div>
+        <span class="new-label">New 8-K</span>
+        <div class="bar-sep"></div>
+        <span class="bar-time">Received at ${timeOnly(new Date())}</span>
+        <span class="bar-filed">Filed ${fmt(f.updated)}</span>
+      </div>
+      <div class="card-body">
+        <div class="company-row">
+          <span class="company-name">${esc(f.title)}</span>
+          ${f.ticker   ? `<span class="ticker-badge">${esc(f.ticker)}</span>`   : ''}
+          ${f.exchange ? `<span class="exchange-badge">${esc(f.exchange)}</span>` : ''}
+        </div>
+        <div class="meta-row">
+          <span>CIK ${esc(f.cik)}</span>
+          <a href="${esc(f.url)}" target="_blank" rel="noopener">
+            View on EDGAR ↗
+          </a>
+        </div>
+        ${briefingHtml}
+        ${itemsHtml ? `<div class="section-label">Items Disclosed</div><div class="items">${itemsHtml}</div>` : ''}
+        ${exHtml    ? `<div class="section-label">Exhibits</div><div class="exhibits">${exHtml}</div>`       : ''}
+      </div>`;
+
+    const feed = document.getElementById('feed');
+    feed.insertBefore(card, feed.firstChild);
+
+    const all = feed.querySelectorAll('.card');
+    if (all.length > 200) all[all.length - 1].remove();
+  }
+
+  function toggle(item) {
+    if (item.querySelector('.item-body')) item.classList.toggle('open');
+  }
+
+  connect();
+</script>
+</body>
+</html>

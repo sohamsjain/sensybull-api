@@ -97,3 +97,22 @@ class FilingCreateSchema(Schema):
     accession_number = fields.Str(validate=validate.Length(max=50))
     description = fields.Str()
     document_url = fields.Str(validate=validate.Length(max=500))
+
+
+class FilingEventSchema(Schema):
+    id               = fields.Str(dump_only=True)
+    edgar_id         = fields.Str(dump_only=True)
+    signal_type      = fields.Str(dump_only=True)
+    ticker           = fields.Str(dump_only=True)
+    exchange         = fields.Str(dump_only=True)
+    company_name     = fields.Str(dump_only=True)
+    company_id       = fields.Str(dump_only=True)
+    cik              = fields.Str(dump_only=True)
+    filing_date      = fields.DateTime(dump_only=True)
+    edgar_url        = fields.Str(dump_only=True)
+    accession_number = fields.Str(dump_only=True)
+    max_tier         = fields.Int(dump_only=True)
+    items            = fields.Raw(dump_only=True)
+    exhibits         = fields.Raw(dump_only=True)
+    briefing         = fields.Raw(dump_only=True)
+    received_at      = fields.DateTime(attribute="created_at", dump_only=True)
