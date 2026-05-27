@@ -217,16 +217,15 @@ def fetch_exhibit_text(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def load_ticker_map() -> dict[str, dict]:
-    """Returns {padded_cik: {ticker, name, exchange}}. Empty dict on failure."""
+    """Returns {padded_cik: {ticker, name}}. Empty dict on failure."""
     try:
         raw = json.loads(fetch_url(TICKERS_URL).decode("utf-8", errors="replace"))
         result: dict[str, dict] = {}
         for entry in raw.values():
             padded_cik = str(entry["cik_str"]).zfill(10)
             result[padded_cik] = {
-                "ticker":   entry.get("ticker", ""),
-                "name":     entry.get("title", ""),
-                "exchange": entry.get("exchange", ""),
+                "ticker": entry.get("ticker", ""),
+                "name":   entry.get("title", ""),
             }
         return result
     except Exception:

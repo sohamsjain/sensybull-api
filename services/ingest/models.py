@@ -22,6 +22,7 @@ class Briefing:
     headline: str
     bullets: list[str]
     company_context: str
+    event_types: list[str] = field(default_factory=lambda: ["Other"])
 
 
 @dataclass
@@ -30,7 +31,6 @@ class Filing:
     title: str        # company name
     cik: str
     ticker: str
-    exchange: str
     updated: str      # ISO 8601 timestamp
     url: str          # EDGAR index URL
     items: list[Item] = field(default_factory=list)

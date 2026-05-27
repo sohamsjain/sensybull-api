@@ -37,7 +37,17 @@ services:
         condition: service_healthy
     volumes:
       - ./services/ingest:/app
-    command: uvicorn server:app --host 0.0.0.0 --port 8000
+    command: python main.py
+
+  web:
+    build: ./services/web
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    volumes:
+      - ./services/web:/app
+      - /app/node_modules
 
 networks:
   default:

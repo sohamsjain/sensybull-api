@@ -104,7 +104,6 @@ class FilingEventSchema(Schema):
     edgar_id         = fields.Str(dump_only=True)
     signal_type      = fields.Str(dump_only=True)
     ticker           = fields.Str(dump_only=True)
-    exchange         = fields.Str(dump_only=True)
     company_name     = fields.Str(dump_only=True)
     company_id       = fields.Str(dump_only=True)
     cik              = fields.Str(dump_only=True)
@@ -115,4 +114,5 @@ class FilingEventSchema(Schema):
     items            = fields.Raw(dump_only=True)
     exhibits         = fields.Raw(dump_only=True)
     briefing         = fields.Raw(dump_only=True)
+    event_types      = fields.List(fields.Str(), attribute="event_types_json", dump_only=True)
     received_at      = fields.DateTime(attribute="created_at", dump_only=True)

@@ -31,7 +31,6 @@ class FilingEvent(BaseModel):
     )
     cik: so.Mapped[str] = so.mapped_column(sa.String(20), nullable=False, index=True)
     ticker: so.Mapped[Optional[str]] = so.mapped_column(sa.String(10), nullable=True, index=True)
-    exchange: so.Mapped[Optional[str]] = so.mapped_column(sa.String(50), nullable=True)
     company_name: so.Mapped[str] = so.mapped_column(sa.String(500), nullable=False)
 
     # Filing metadata
@@ -54,6 +53,9 @@ class FilingEvent(BaseModel):
     # Shape: {headline, bullets, company_context}
     briefing_json: so.Mapped[Optional[dict]] = so.mapped_column(sa.JSON, nullable=True)
 
+    # LLM-classified event types, e.g. ["Acquisition", "Debt / Financing"]
+    event_types_json: so.Mapped[Optional[list]] = so.mapped_column(sa.JSON, nullable=True)
+
     # Relationships
     company: so.Mapped[Optional["Company"]] = so.relationship(  # noqa: F821
         "Company", backref=so.backref("filing_events", lazy="dynamic"),
@@ -71,7 +73,6 @@ class FilingEvent(BaseModel):
             "edgar_id": self.edgar_id,
             "signal_type": self.signal_type,
             "ticker": self.ticker,
-            "exchange": self.exchange,
             "company_name": self.company_name,
             "company_id": self.company_id,
             "cik": self.cik,
@@ -82,6 +83,7 @@ class FilingEvent(BaseModel):
             "items": self.items_json or [],
             "exhibits": self.exhibits_json or [],
             "briefing": self.briefing_json,
+            "event_types": self.event_types_json or [],
             "received_at": self.created_at.isoformat(),
         }
 

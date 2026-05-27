@@ -226,7 +226,6 @@ def build_filing(entry: dict, detail: dict, ticker_map: dict) -> Filing:
         title=entry["title"],
         cik=entry["cik"],
         ticker=ticker_info.get("ticker", ""),
-        exchange=ticker_info.get("exchange", ""),
         updated=entry["updated"],
         url=entry["url"],
         items=items,

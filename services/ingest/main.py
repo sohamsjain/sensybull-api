@@ -1,20 +1,17 @@
 """
-server.py — FastAPI app and background poll loop.
+main.py — 8-K ingest pipeline.
 
-Thin glue layer: imports all other modules, contains no business logic of its own.
+Polls SEC EDGAR for new 8-K filings, extracts items and exhibits,
+generates LLM briefings, and publishes events to Redis.
 """
 
 import asyncio
 import logging
+import re
 import time
-from contextlib import asynccontextmanager
-from dataclasses import asdict
 
-from fastapi import FastAPI, WebSocket
-from starlette.websockets import WebSocketDisconnect
-
-from broadcaster import Broadcaster
 from briefing import generate_briefing
+from events import FilingEvent, FilingEventBriefing, FilingEventExhibit, FilingEventItem
 from fetcher import (
     POLL_INTERVAL,
     _is_fetchable_exhibit,
@@ -25,9 +22,8 @@ from fetcher import (
     parse_feed_entries,
 )
 from parser import build_filing
-from seen import load_seen, save_seen
-from events import FilingEvent, FilingEventItem, FilingEventExhibit, FilingEventBriefing
 from publisher import publish_filing
+from seen import load_seen, save_seen
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -36,59 +32,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-TICKER_REFRESH_INTERVAL = 24 * 60 * 60  # refresh ticker map every 24 hours
+TICKER_REFRESH_INTERVAL = 24 * 60 * 60
 
-broadcaster = Broadcaster()
-_last_successful_poll: float = 0.0  # unix timestamp; 0 = never
-
-
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    asyncio.create_task(poll_loop())
-    yield
-
-
-app = FastAPI(title="8-K Stream", lifespan=lifespan)
-
-
-# ---------------------------------------------------------------------------
-# WebSocket endpoint
-# ---------------------------------------------------------------------------
-
-@app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket) -> None:
-    await broadcaster.connect(websocket)
-    try:
-        while True:
-            await websocket.receive_text()  # keep the connection alive; ignore input
-    except WebSocketDisconnect:
-        broadcaster.disconnect(websocket)
-
-
-# ---------------------------------------------------------------------------
-# Health check
-# ---------------------------------------------------------------------------
-
-@app.get("/health")
-async def health() -> dict:
-    idle_seconds = int(time.time() - _last_successful_poll) if _last_successful_poll else None
-    return {
-        "status": "ok",
-        "clients": broadcaster.client_count,
-        "last_poll_seconds_ago": idle_seconds,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Background poll loop
-# ---------------------------------------------------------------------------
 
 async def poll_loop() -> None:
-    global _last_successful_poll
     loop = asyncio.get_event_loop()
 
     log.info("Loading ticker map...")
@@ -100,7 +47,6 @@ async def poll_loop() -> None:
     log.info("Seen set loaded (%d entries). Polling every %ds.", len(seen), POLL_INTERVAL)
 
     while True:
-        # Refresh ticker map every 24 hours
         if time.time() - last_ticker_refresh >= TICKER_REFRESH_INTERVAL:
             log.info("Refreshing ticker map...")
             fresh = await loop.run_in_executor(None, load_ticker_map)
@@ -112,23 +58,20 @@ async def poll_loop() -> None:
                 log.warning("Ticker map refresh returned empty — keeping stale copy")
 
         try:
-            root    = await loop.run_in_executor(None, fetch_feed)
+            root = await loop.run_in_executor(None, fetch_feed)
             entries = parse_feed_entries(root)
-            new     = [e for e in entries if e["id"] not in seen]
-
-            _last_successful_poll = time.time()
+            new = [e for e in entries if e["id"] not in seen]
 
             if new:
                 log.info("%d new filing(s) found", len(new))
 
-            for entry in reversed(new):  # oldest first
+            for entry in reversed(new):
                 try:
                     detail = await loop.run_in_executor(
                         None, fetch_filing_detail, entry["url"]
                     )
                     filing = build_filing(entry, detail, ticker_map)
 
-                    # Fetch exhibit text (EX-99.x only, max 3)
                     fetchable = [
                         ex for ex in detail.get("exhibits", [])
                         if _is_fetchable_exhibit(ex["type"])
@@ -141,27 +84,25 @@ async def poll_loop() -> None:
                         if html:
                             exhibit_texts[ex["type"]] = html
 
-                    # Generate LLM briefing
                     filing.briefing = await loop.run_in_executor(
                         None, generate_briefing, filing, exhibit_texts
                     )
 
-                    await broadcaster.broadcast(asdict(filing))
-
-                    # Build and publish the Redis event
-                    import re as _re
                     accession = ""
-                    m = _re.search(r"/(\d{18})/", filing.url)
+                    m = re.search(r"/(\d{18})/", filing.url)
                     if m:
                         raw = m.group(1)
                         accession = f"{raw[:10]}-{raw[10:12]}-{raw[12:]}"
+
+                    event_types = (
+                        filing.briefing.event_types if filing.briefing else ["Other"]
+                    )
 
                     event = FilingEvent(
                         edgar_id=entry["id"],
                         signal_type="8-K",
                         cik=filing.cik,
                         ticker=filing.ticker or "",
-                        exchange=filing.exchange or "",
                         company_name=filing.title,
                         filing_date=filing.updated,
                         edgar_url=filing.url,
@@ -190,12 +131,13 @@ async def poll_loop() -> None:
                             bullets=filing.briefing.bullets,
                             company_context=filing.briefing.company_context,
                         ) if filing.briefing else None,
+                        event_types=event_types,
                     )
                     publish_filing(event.to_json())
 
                     seen[entry["id"]] = entry["updated"]
                     save_seen(seen)
-                    log.info("Broadcast: %s  ticker=%s  items=%d",
+                    log.info("Published: %s  ticker=%s  items=%d",
                              filing.title, filing.ticker or "—", len(filing.items))
                 except Exception as exc:
                     log.warning("Skipping %s: %s", entry.get("id", "?"), exc)
@@ -204,3 +146,7 @@ async def poll_loop() -> None:
             log.warning("Feed fetch failed: %s", exc)
 
         await asyncio.sleep(POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    asyncio.run(poll_loop())

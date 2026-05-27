@@ -43,7 +43,6 @@ class FilingEvent:
     # Company identity
     cik: str
     ticker: str
-    exchange: str
     company_name: str        # raw EDGAR title
 
     # Filing metadata
@@ -56,6 +55,9 @@ class FilingEvent:
     items: list[FilingEventItem] = field(default_factory=list)
     exhibits: list[FilingEventExhibit] = field(default_factory=list)
     briefing: FilingEventBriefing | None = None
+
+    # LLM-classified event types (e.g. ["Acquisition", "Debt / Financing"])
+    event_types: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)

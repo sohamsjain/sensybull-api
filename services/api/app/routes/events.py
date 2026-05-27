@@ -9,6 +9,7 @@ GET  /events/company/<company_id>   events for one company (with optional tier f
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
+import sqlalchemy as sa
 
 from app.models.filing_event import FilingEvent
 from app.models.watchlist import Watchlist
@@ -21,14 +22,25 @@ def _user_company_ids(user_id: str) -> set[str]:
     return {c.id for wl in watchlists for c in wl.companies}
 
 
+def _apply_event_type_filter(q, event_type: str | None):
+    """Filter by event_type using a JSON text search (works on SQLite + Postgres)."""
+    if not event_type:
+        return q
+    # JSON arrays are stored as text — a quoted substring match is safe for
+    # canonical labels that don't contain regex-special characters.
+    pattern = f'%"{event_type}"%'
+    return q.filter(sa.cast(FilingEvent.event_types_json, sa.Text).like(pattern))
+
+
 @events_bp.route("/", methods=["GET"])
 @jwt_required()
 def get_events():
-    user_id    = get_jwt_identity()
-    page       = request.args.get("page", 1, type=int)
-    per_page   = request.args.get("per_page", 50, type=int)
-    max_tier   = request.args.get("max_tier", 3, type=int)    # filter: only <= this tier
-    signal_type = request.args.get("signal_type")             # "8-K", "earnings", etc.
+    user_id     = get_jwt_identity()
+    page        = request.args.get("page", 1, type=int)
+    per_page    = request.args.get("per_page", 50, type=int)
+    max_tier    = request.args.get("max_tier", 3, type=int)    # filter: only <= this tier
+    signal_type = request.args.get("signal_type")              # "8-K", "earnings", etc.
+    event_type  = request.args.get("event_type")               # e.g. "Acquisition"
 
     company_ids = _user_company_ids(user_id)
     if not company_ids:
@@ -41,6 +53,7 @@ def get_events():
     )
     if signal_type:
         q = q.filter(FilingEvent.signal_type == signal_type)
+    q = _apply_event_type_filter(q, event_type)
 
     pagination = q.order_by(FilingEvent.filing_date.desc()).paginate(
         page=page, per_page=min(per_page, 200), error_out=False
@@ -51,6 +64,50 @@ def get_events():
         "page": page,
         "per_page": per_page,
     })
+
+
+@events_bp.route("/all", methods=["GET"])
+@jwt_required()
+def get_all_events():
+    """Paginated feed of ALL events regardless of watchlist."""
+    page        = request.args.get("page", 1, type=int)
+    per_page    = request.args.get("per_page", 50, type=int)
+    max_tier    = request.args.get("max_tier", 3, type=int)
+    signal_type = request.args.get("signal_type")
+    event_type  = request.args.get("event_type")
+
+    q = FilingEvent.query.filter(FilingEvent.max_tier <= max_tier)
+    if signal_type:
+        q = q.filter(FilingEvent.signal_type == signal_type)
+    q = _apply_event_type_filter(q, event_type)
+
+    pagination = q.order_by(FilingEvent.filing_date.desc()).paginate(
+        page=page, per_page=min(per_page, 200), error_out=False
+    )
+    return jsonify({
+        "events": [e.to_ws_payload() for e in pagination.items],
+        "total": pagination.total,
+        "page": page,
+        "per_page": per_page,
+    })
+
+
+EVENT_TYPES = [
+    "M&A / Merger", "Acquisition", "Divestiture", "Activist Proxy",
+    "Activist Initial", "Strategic Review", "Tender Offer", "Issuer Tender",
+    "Going-Private", "Going Dark", "Spin-Off", "Capital Return", "Rights Issue",
+    "Restructuring", "Insolvency", "Liquidation", "Delisting", "Busted M&A",
+    "Litigation", "Domicile Change", "Earnings", "Leadership Change",
+    "Debt / Financing", "Impairment", "Restatement", "Regulatory Action",
+    "Cybersecurity Incident", "Material Agreement", "Dividend Change",
+    "Bankruptcy", "Shelf Registration", "Share Offering", "Stock Split", "Other",
+]
+
+
+@events_bp.route("/types", methods=["GET"])
+def get_event_types():
+    """Return the canonical list of event type labels for filter UIs."""
+    return jsonify({"event_types": EVENT_TYPES})
 
 
 @events_bp.route("/<event_id>", methods=["GET"])
@@ -76,10 +133,11 @@ def get_company_events(company_id):
     if company_id not in company_ids:
         return jsonify({"error": "Access denied"}), 403
 
-    page       = request.args.get("page", 1, type=int)
-    per_page   = request.args.get("per_page", 50, type=int)
-    max_tier   = request.args.get("max_tier", 3, type=int)
+    page        = request.args.get("page", 1, type=int)
+    per_page    = request.args.get("per_page", 50, type=int)
+    max_tier    = request.args.get("max_tier", 3, type=int)
     signal_type = request.args.get("signal_type")
+    event_type  = request.args.get("event_type")
 
     q = (
         FilingEvent.query
@@ -88,6 +146,7 @@ def get_company_events(company_id):
     )
     if signal_type:
         q = q.filter_by(signal_type=signal_type)
+    q = _apply_event_type_filter(q, event_type)
 
     pagination = q.order_by(FilingEvent.filing_date.desc()).paginate(
         page=page, per_page=min(per_page, 200), error_out=False

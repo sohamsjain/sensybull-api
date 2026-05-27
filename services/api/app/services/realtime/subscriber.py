@@ -71,7 +71,6 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             company_id=company.id if company else None,
             cik=cik,
             ticker=ticker,
-            exchange=data.get("exchange") or None,
             company_name=data.get("company_name", ""),
             filing_date=_parse_filing_date(data.get("filing_date")),
             edgar_url=data.get("edgar_url") or None,
@@ -80,6 +79,7 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             items_json=items,
             exhibits_json=data.get("exhibits", []),
             briefing_json=data.get("briefing"),
+            event_types_json=data.get("event_types", []),
         )
 
         try:
