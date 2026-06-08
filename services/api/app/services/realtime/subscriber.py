@@ -33,6 +33,8 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         from app import db
         from app.models.company import Company
         from app.models.filing_event import FilingEvent
+        from app.models.event_type import EventType
+        from app.models.catalyst import Catalyst
         from app.models.watchlist import Watchlist
 
         try:
@@ -50,20 +52,32 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             log.debug("Subscriber: duplicate edgar_id=%s — skipped", edgar_id)
             return
 
-        # Resolve company_id (best-effort — NULL if not yet in companies table)
+        # Resolve company — create if missing so we never get orphan events
         company = None
         if ticker:
             company = Company.query.filter_by(ticker=ticker).first()
         if company is None and cik:
             company = Company.query.filter_by(cik=cik).first()
         if company is None and cik:
-            # Also try zero-padded CIK
             company = Company.query.filter_by(cik=cik.zfill(10)).first()
+        if company is None and ticker:
+            company = Company(
+                name=data.get("company_name", ticker),
+                ticker=ticker,
+                cik=cik.zfill(10) if cik else None,
+            )
+            db.session.add(company)
+            db.session.flush()
+            log.info("Subscriber: auto-created company ticker=%s cik=%s", ticker, cik)
 
         max_tier = data.get("max_tier", 3)
         items    = data.get("items", [])
         if not isinstance(max_tier, int):
             max_tier = min((it.get("tier", 3) for it in items), default=3)
+
+        raw_event_types = data.get("event_types", [])
+        briefing_data = data.get("briefing") or {}
+        deal_terms = briefing_data.get("deal_terms") or {}
 
         event = FilingEvent(
             edgar_id=edgar_id,
@@ -79,8 +93,32 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             items_json=items,
             exhibits_json=data.get("exhibits", []),
             briefing_json=data.get("briefing"),
-            event_types_json=data.get("event_types", []),
+            event_types_json=raw_event_types,
         )
+
+        for type_name in raw_event_types:
+            event.event_types.append(EventType(
+                type_name=type_name,
+                attributes=deal_terms if deal_terms else None,
+            ))
+
+        # Persist catalysts from briefing
+        catalysts_data = briefing_data.get("catalysts") or []
+        for cat in catalysts_data:
+            if not isinstance(cat, dict) or not cat.get("event"):
+                continue
+            catalyst_date = None
+            if cat.get("date"):
+                try:
+                    catalyst_date = datetime.strptime(cat["date"], "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    pass
+            event.catalysts.append(Catalyst(
+                event_description=cat["event"],
+                catalyst_date=catalyst_date,
+                ticker=ticker,
+                company_name=data.get("company_name", ""),
+            ))
 
         try:
             db.session.add(event)

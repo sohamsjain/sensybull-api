@@ -68,7 +68,7 @@ class WatchlistSchema(Schema):
     user_id = fields.Str(dump_only=True)
     created_at = fields.DateTime(dump_only=True)
     user = fields.Nested('UserSchema', only=('id', 'name', 'email'), dump_only=True)
-    companies = fields.List(fields.Nested('CompanySchema', exclude=('filings', 'watchlists')), dump_only=True)
+    companies = fields.List(fields.Nested('CompanySchema', exclude=('filings',)), dump_only=True)
 
 
 class WatchlistCreateSchema(Schema):
@@ -99,6 +99,13 @@ class FilingCreateSchema(Schema):
     document_url = fields.Str(validate=validate.Length(max=500))
 
 
+class EventTypeSchema(Schema):
+    id         = fields.Str(dump_only=True)
+    type_name  = fields.Str(dump_only=True)
+    attributes = fields.Raw(dump_only=True)
+    created_at = fields.DateTime(dump_only=True)
+
+
 class FilingEventSchema(Schema):
     id               = fields.Str(dump_only=True)
     edgar_id         = fields.Str(dump_only=True)
@@ -115,4 +122,5 @@ class FilingEventSchema(Schema):
     exhibits         = fields.Raw(dump_only=True)
     briefing         = fields.Raw(dump_only=True)
     event_types      = fields.List(fields.Str(), attribute="event_types_json", dump_only=True)
+    event_type_details = fields.List(fields.Nested(EventTypeSchema), attribute="event_types", dump_only=True)
     received_at      = fields.DateTime(attribute="created_at", dump_only=True)

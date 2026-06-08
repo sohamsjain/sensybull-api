@@ -20,12 +20,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 from edgar import set_identity, Company as EdgarCompany
 from edgar.reference.tickers import get_company_tickers, get_companies_by_exchange
 
-edgar_identity = os.environ.get('EDGAR_IDENTITY')
-if not edgar_identity:
-    print("Error: EDGAR_IDENTITY environment variable is not set.")
-    print("Set it to your name and email, e.g.: EDGAR_IDENTITY='Your Name your@email.com'")
+sec_user_agent = os.environ.get('SEC_USER_AGENT')
+if not sec_user_agent:
+    print("Error: SEC_USER_AGENT environment variable is not set.")
+    print("Set it to your name and email, e.g.: SEC_USER_AGENT='Your Name your@email.com'")
     sys.exit(1)
-set_identity(edgar_identity)
+set_identity(sec_user_agent)
 
 from app import create_app, db
 from app.models.company import Company

@@ -128,8 +128,13 @@ async def poll_loop() -> None:
                         ],
                         briefing=FilingEventBriefing(
                             headline=filing.briefing.headline,
-                            bullets=filing.briefing.bullets,
-                            company_context=filing.briefing.company_context,
+                            summary=filing.briefing.summary,
+                            primary_event_type=filing.briefing.primary_event_type,
+                            significance=filing.briefing.significance,
+                            sentiment=filing.briefing.sentiment,
+                            investor_takeaway=filing.briefing.investor_takeaway,
+                            catalysts=filing.briefing.catalysts,
+                            deal_terms=filing.briefing.deal_terms,
                         ) if filing.briefing else None,
                         event_types=event_types,
                     )

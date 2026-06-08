@@ -9,7 +9,7 @@ from edgar import set_identity, get_current_filings
 
 load_dotenv()
 # SEC requires identification for API access
-identity = os.environ.get("EDGAR_IDENTITY", "Sensybull sensybull@example.com")
+identity = os.environ.get("SEC_USER_AGENT", "Sensybull sensybull@example.com")
 set_identity(identity)
 
 

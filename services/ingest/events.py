@@ -29,8 +29,13 @@ class FilingEventExhibit:
 @dataclass
 class FilingEventBriefing:
     headline: str
-    bullets: list[str]
-    company_context: str
+    summary: str
+    primary_event_type: str
+    significance: str                # "High" / "Medium" / "Low"
+    sentiment: str                   # "Positive" / "Negative" / "Neutral" / "Mixed"
+    investor_takeaway: str           # 1-sentence "so what"
+    catalysts: list[dict[str, str]] = field(default_factory=list)
+    deal_terms: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

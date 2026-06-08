@@ -6,17 +6,31 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, '.env'))
 
 
+def _require_env(name: str) -> str:
+    """Return an env var's value or raise if missing/empty."""
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"Required environment variable {name} is not set")
+    return value
+
+
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key'
+    SECRET_KEY = _require_env('SECRET_KEY')
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///sensybull_api.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or 'jwt-secret-string'
+
+    # Engine options: SQLite needs check_same_thread=False; Postgres gets connection pooling
+    _db_uri = SQLALCHEMY_DATABASE_URI
+    if _db_uri.startswith('sqlite'):
+        SQLALCHEMY_ENGINE_OPTIONS = {'connect_args': {'check_same_thread': False}}
+    else:
+        SQLALCHEMY_ENGINE_OPTIONS = {'pool_size': 5, 'max_overflow': 10, 'pool_pre_ping': True}
+
+    JWT_SECRET_KEY = _require_env('JWT_SECRET_KEY')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=999)
     GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
     GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
-    EDGAR_IDENTITY = os.environ.get('EDGAR_IDENTITY')  # e.g. 'Your Name your@email.com'
-
     # Application identity (used in email subjects/templates/links)
     APP_NAME = os.environ.get('APP_NAME') or 'Sensybull'
     FRONTEND_URL = os.environ.get('FRONTEND_URL') or 'http://localhost:3000'
@@ -42,5 +56,16 @@ class Config:
     EMAIL_VERIFY_TOKEN_HOURS = int(os.environ.get('EMAIL_VERIFY_TOKEN_HOURS') or 24)
     PASSWORD_RESET_TOKEN_HOURS = int(os.environ.get('PASSWORD_RESET_TOKEN_HOURS') or 1)
 
-    # Rate limiting
+    # CORS: comma-separated origins (defaults to FRONTEND_URL)
+    CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS')
+
+    # Rate limiting (use redis://... in production for cross-instance limits)
     RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI') or 'memory://'
+
+    # Logging
+    LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
+
+    # Error monitoring (Sentry)
+    SENTRY_DSN = os.environ.get('SENTRY_DSN')
+    SENTRY_TRACES_SAMPLE_RATE = os.environ.get('SENTRY_TRACES_SAMPLE_RATE') or '0.1'
+    SENTRY_ENVIRONMENT = os.environ.get('SENTRY_ENVIRONMENT') or 'production'

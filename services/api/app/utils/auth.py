@@ -1,9 +1,12 @@
+import logging
 from functools import wraps
 from flask import jsonify, current_app
 from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
 from app.models.user import User
 import requests
 import jwt as pyjwt
+
+log = logging.getLogger(__name__)
 
 
 def admin_required(f):
@@ -75,5 +78,5 @@ def verify_google_token(token):
         )
         return payload
     except Exception as e:
-        print(f"Google token verification error: {e}")
+        log.warning("Google token verification failed: %s", e)
         return None

@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint API service
+        run: ruff check services/api/
+
+      - name: Lint Ingest service
+        run: ruff check services/ingest/
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: sensybull_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        working-directory: services/api
+        run: pip install -r requirements.txt pytest
+
+      - name: Run migrations
+        working-directory: services/api
+        env:
+          SECRET_KEY: test-secret-key-ci
+          JWT_SECRET_KEY: test-jwt-secret-ci
+          DATABASE_URL: postgresql://test:test@localhost:5432/sensybull_test
+          REDIS_URL: redis://localhost:6379/0
+        run: flask db upgrade
+
+      - name: Run tests
+        working-directory: services/api
+        env:
+          SECRET_KEY: test-secret-key-ci
+          JWT_SECRET_KEY: test-jwt-secret-ci
+          DATABASE_URL: postgresql://test:test@localhost:5432/sensybull_test
+          REDIS_URL: redis://localhost:6379/0
+          MAIL_PROVIDER: console
+          SOCKETIO_ASYNC_MODE: threading
+        run: pytest tests/ -v --tb=short
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t sensybull-api ./services/api
+
+      - name: Build Ingest image
+        run: docker build -t sensybull-ingest ./services/ingest

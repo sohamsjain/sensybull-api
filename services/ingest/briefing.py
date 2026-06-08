@@ -90,6 +90,64 @@ EVENT_TYPES = [
 
 _EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
 
+_SYSTEM_PROMPT = f"""\
+You are a buyside special-situations analyst reading SEC 8-K filings.
+Your job is to interpret filings the way an event-driven investor would —
+identify the deal, the parties, the economics, and the status.
+
+Given an 8-K filing, produce a JSON object with these fields:
+
+1. "headline" — a short, punchy headline (max 100 chars). Use semicolons to
+   separate key facts. Focus on WHAT is happening, not who filed.
+   Good: "SPAC merger with FGMC; forward purchase agreement for up to 3M shares"
+   Bad:  "FG Merger II Corp. enters into Forward Purchase Agreement with Atsion"
+
+2. "summary" — a 2-4 sentence paragraph written from the TARGET COMPANY's
+   perspective. Tell the investor story: what deal is happening, who the
+   counterparties are, key economics (dollar amounts, share counts, prices),
+   and the current procedural status (vote pending, effective date, etc.).
+   Write flowing prose, not bullet points.
+
+3. "primary_event_type" — the single MOST investor-relevant label from this list:
+   [{_EVENT_TYPES_STR}]
+
+4. "event_types" — 1 to 3 labels from the same list (including the primary).
+
+5. "deal_terms" — a flat object of key-value pairs extracting structured data.
+   Include whichever of these apply (omit fields that don't):
+   - "counterparty": the other party in the transaction
+   - "deal_value": total consideration or deal size
+   - "share_count": number of shares involved
+   - "price_per_share": per-share price if stated
+   - "premium": acquisition premium if stated or calculable (e.g. "45%")
+   - "consideration_type": "cash", "stock", or "mixed"
+   - "deal_status": current status (e.g. "definitive agreement signed",
+     "vote pending", "closed", "registration effective")
+   - "expected_close": expected or actual closing date
+   - "deal_type": e.g. "SPAC merger", "asset purchase", "stock-for-stock"
+
+6. "significance" — how actionable is this for an event-driven investor?
+   "High" = potential trade setup (M&A, tender, activist, material deal, bankruptcy).
+   "Medium" = notable but not immediately tradeable (leadership change, debt raise,
+   restructuring, earnings).
+   "Low" = routine/informational (bylaw change, Reg FD, title change, compliance).
+
+7. "sentiment" — net impact on the company's stock:
+   "Positive", "Negative", "Neutral", or "Mixed".
+
+8. "investor_takeaway" — one sentence: the "so what" for a portfolio manager.
+   Examples:
+   - "Creates ~$2.50/share merger arb spread with expected Q3 2026 close."
+   - "Routine COO-to-CCO title change; no compensation or reporting changes."
+   - "$200M shelf registration signals potential near-term equity raise; dilution risk."
+
+9. "catalysts" — list of key upcoming dates/events extracted from the filing.
+   Each entry: {{"date": "YYYY-MM-DD" or null, "event": "description"}}.
+   Include: vote dates, tender deadlines, expected close dates, effective dates,
+   record dates. Omit this field entirely if no catalysts are mentioned.
+
+Respond ONLY with valid JSON. No markdown, no commentary."""
+
 
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
@@ -146,8 +204,9 @@ def _is_rate_limit(exc: Exception) -> bool:
 def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing:
     """Generate a Briefing from filing data + exhibit HTML. Returns fallback on failure."""
     fallback = Briefing(
-        headline=filing.title, bullets=[], company_context="",
-        event_types=["Other"],
+        headline=filing.title, summary="", primary_event_type="Other",
+        deal_terms={}, significance="Medium", sentiment="Neutral",
+        investor_takeaway="", catalysts=[], event_types=["Other"],
     )
     user_msg = _build_user_message(filing, exhibit_texts)
     messages = [
@@ -160,17 +219,61 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
             client = Groq(api_key=_next_api_key())
             response = client.chat.completions.create(
                 model=model,
-                max_tokens=512,
+                max_tokens=1024,
                 response_format={"type": "json_object"},
                 messages=messages,
             )
             raw = response.choices[0].message.content
             data = json.loads(raw)
             log.info("Briefing generated via %s for %s", model, filing.title)
+
+            # Validate primary_event_type against canonical list
+            raw_primary = data.get("primary_event_type", "")
+            valid_map = {t.lower(): t for t in EVENT_TYPES}
+            primary = valid_map.get(raw_primary.strip().lower(), "Other") if raw_primary else "Other"
+
+            # Ensure deal_terms is a flat str→str dict
+            raw_terms = data.get("deal_terms", {})
+            deal_terms = {
+                str(k): str(v) for k, v in raw_terms.items()
+                if isinstance(k, str) and v
+            } if isinstance(raw_terms, dict) else {}
+
+            # Validate significance
+            _VALID_SIGNIFICANCE = {"high": "High", "medium": "Medium", "low": "Low"}
+            raw_sig = data.get("significance", "")
+            significance = _VALID_SIGNIFICANCE.get(
+                raw_sig.strip().lower() if isinstance(raw_sig, str) else "", "Medium"
+            )
+
+            # Validate sentiment
+            _VALID_SENTIMENT = {"positive": "Positive", "negative": "Negative",
+                                "neutral": "Neutral", "mixed": "Mixed"}
+            raw_sent = data.get("sentiment", "")
+            sentiment = _VALID_SENTIMENT.get(
+                raw_sent.strip().lower() if isinstance(raw_sent, str) else "", "Neutral"
+            )
+
+            # Validate catalysts — list of dicts with "event" key
+            raw_catalysts = data.get("catalysts", [])
+            catalysts = []
+            if isinstance(raw_catalysts, list):
+                for cat in raw_catalysts:
+                    if isinstance(cat, dict) and cat.get("event"):
+                        catalysts.append({
+                            "date": str(cat["date"]) if cat.get("date") else None,
+                            "event": str(cat["event"]),
+                        })
+
             return Briefing(
                 headline=data.get("headline", filing.title),
-                bullets=data.get("bullets", [])[:3],
-                company_context=data.get("company_context", ""),
+                summary=data.get("summary", ""),
+                primary_event_type=primary,
+                deal_terms=deal_terms,
+                significance=significance,
+                sentiment=sentiment,
+                investor_takeaway=data.get("investor_takeaway", ""),
+                catalysts=catalysts,
                 event_types=_validate_event_types(data.get("event_types", [])),
             )
         except Exception as exc:

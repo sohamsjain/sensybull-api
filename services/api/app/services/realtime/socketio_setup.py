@@ -6,6 +6,7 @@ Import `socketio` from here anywhere inside the api service.
 """
 
 import logging
+import os
 
 from flask import request
 from flask_jwt_extended import decode_token
@@ -13,11 +14,8 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 
 log = logging.getLogger(__name__)
 
-# Threading mode: safe for development and most production deployments.
-# Switch to async_mode="gevent" + gevent-websocket for high concurrency.
 socketio = SocketIO(
-    cors_allowed_origins="*",
-    async_mode="threading",
+    async_mode=os.environ.get("SOCKETIO_ASYNC_MODE", "eventlet"),
     logger=False,
     engineio_logger=False,
 )

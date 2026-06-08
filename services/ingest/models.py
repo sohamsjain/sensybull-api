@@ -20,8 +20,13 @@ class Exhibit:
 @dataclass
 class Briefing:
     headline: str
-    bullets: list[str]
-    company_context: str
+    summary: str
+    primary_event_type: str
+    deal_terms: dict[str, str]       # e.g. {"counterparty": "...", "deal_value": "..."}
+    significance: str                # "High" / "Medium" / "Low"
+    sentiment: str                   # "Positive" / "Negative" / "Neutral" / "Mixed"
+    investor_takeaway: str           # 1-sentence "so what" for a PM
+    catalysts: list[dict[str, str]]  # [{"date": "2026-07-15", "event": "Shareholder vote"}]
     event_types: list[str] = field(default_factory=lambda: ["Other"])
 
 

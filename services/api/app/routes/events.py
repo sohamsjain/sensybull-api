@@ -12,6 +12,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 import sqlalchemy as sa
 
 from app.models.filing_event import FilingEvent
+from app.models.event_type import EventType
 from app.models.watchlist import Watchlist
 
 events_bp = Blueprint("events", __name__)
@@ -23,13 +24,10 @@ def _user_company_ids(user_id: str) -> set[str]:
 
 
 def _apply_event_type_filter(q, event_type: str | None):
-    """Filter by event_type using a JSON text search (works on SQLite + Postgres)."""
+    """Filter by event_type using the EventType relationship."""
     if not event_type:
         return q
-    # JSON arrays are stored as text — a quoted substring match is safe for
-    # canonical labels that don't contain regex-special characters.
-    pattern = f'%"{event_type}"%'
-    return q.filter(sa.cast(FilingEvent.event_types_json, sa.Text).like(pattern))
+    return q.filter(FilingEvent.event_types.any(EventType.type_name == event_type))
 
 
 @events_bp.route("/", methods=["GET"])
@@ -67,7 +65,6 @@ def get_events():
 
 
 @events_bp.route("/all", methods=["GET"])
-@jwt_required()
 def get_all_events():
     """Paginated feed of ALL events regardless of watchlist."""
     page        = request.args.get("page", 1, type=int)
@@ -108,6 +105,33 @@ EVENT_TYPES = [
 def get_event_types():
     """Return the canonical list of event type labels for filter UIs."""
     return jsonify({"event_types": EVENT_TYPES})
+
+
+@events_bp.route("/catalysts", methods=["GET"])
+def get_upcoming_catalysts():
+    """Return upcoming catalysts across all events, ordered by date."""
+    from datetime import date
+    from app.models.catalyst import Catalyst
+
+    limit = min(request.args.get("limit", 50, type=int), 200)
+    cutoff = date.today()
+
+    q = (
+        Catalyst.query
+        .filter(Catalyst.catalyst_date >= cutoff)
+        .order_by(Catalyst.catalyst_date.asc())
+        .limit(limit)
+    )
+    return jsonify({"catalysts": [
+        {
+            "id": c.id,
+            "filing_event_id": c.filing_event_id,
+            "event": c.event_description,
+            "date": c.catalyst_date.isoformat() if c.catalyst_date else None,
+            "ticker": c.ticker,
+            "company_name": c.company_name,
+        } for c in q.all()
+    ]})
 
 
 @events_bp.route("/<event_id>", methods=["GET"])

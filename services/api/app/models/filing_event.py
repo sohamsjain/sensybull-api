@@ -5,7 +5,7 @@ FilingEvent — persisted record of a processed SEC filing.
 One row per unique EDGAR entry ID. Stores the full parsed payload so the
 API can serve event history without calling EDGAR again.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import sqlalchemy as sa
 import sqlalchemy.orm as so
@@ -60,11 +60,33 @@ class FilingEvent(BaseModel):
     company: so.Mapped[Optional["Company"]] = so.relationship(  # noqa: F821
         "Company", backref=so.backref("filing_events", lazy="dynamic"),
     )
+    event_types: so.Mapped[list["EventType"]] = so.relationship(  # noqa: F821
+        "EventType", back_populates="filing_event",
+        cascade="all, delete-orphan", lazy="selectin",
+    )
+    catalysts: so.Mapped[list["Catalyst"]] = so.relationship(  # noqa: F821
+        "Catalyst", back_populates="filing_event",
+        cascade="all, delete-orphan", lazy="selectin",
+    )
 
     __table_args__ = (
         sa.Index("ix_filing_event_ticker_date", "ticker", "filing_date"),
         sa.Index("ix_filing_event_cik_date", "cik", "filing_date"),
     )
+
+    @staticmethod
+    def _utc_iso(dt: datetime | None) -> str | None:
+        """Ensure a datetime serializes with a UTC offset.
+
+        SQLite strips timezone info on storage, so datetimes read back as
+        naive even though they were stored as UTC.  Re-attach the offset so
+        the frontend's ``new Date()`` converts to the user's local time.
+        """
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
 
     def to_ws_payload(self) -> dict:
         """Serialize for WebSocket delivery to the frontend."""
@@ -76,15 +98,19 @@ class FilingEvent(BaseModel):
             "company_name": self.company_name,
             "company_id": self.company_id,
             "cik": self.cik,
-            "filing_date": self.filing_date.isoformat() if self.filing_date else None,
+            "filing_date": self._utc_iso(self.filing_date),
             "edgar_url": self.edgar_url,
             "accession_number": self.accession_number,
             "max_tier": self.max_tier,
             "items": self.items_json or [],
             "exhibits": self.exhibits_json or [],
             "briefing": self.briefing_json,
-            "event_types": self.event_types_json or [],
-            "received_at": self.created_at.isoformat(),
+            "event_types": [et.type_name for et in self.event_types] if self.event_types else self.event_types_json or [],
+            "catalysts": [
+                {"event": c.event_description, "date": c.catalyst_date.isoformat() if c.catalyst_date else None}
+                for c in self.catalysts
+            ] if self.catalysts else [],
+            "received_at": self._utc_iso(self.created_at),
         }
 
     def __repr__(self):
