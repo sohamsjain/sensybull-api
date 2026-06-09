@@ -51,8 +51,6 @@ services:
         sync: false
       - key: SEC_USER_AGENT
         sync: false
-    buildCommand: ""
-    startCommand: "flask db upgrade && python main.py"
 
   # ── Ingest service ────────────────────────────────────────────────────
   - type: worker

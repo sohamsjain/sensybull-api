@@ -24,4 +24,4 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 # Graceful shutdown: eventlet handles SIGTERM
 STOPSIGNAL SIGTERM
 
-CMD ["python", "main.py"]
+CMD ["sh", "-c", "flask db upgrade && python main.py"]
