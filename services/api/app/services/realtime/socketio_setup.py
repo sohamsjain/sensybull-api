@@ -15,7 +15,7 @@ from flask_socketio import SocketIO, emit, join_room
 log = logging.getLogger(__name__)
 
 socketio = SocketIO(
-    async_mode=os.environ.get("SOCKETIO_ASYNC_MODE", "eventlet"),
+    async_mode=os.environ.get("SOCKETIO_ASYNC_MODE", "gevent"),
     logger=False,
     engineio_logger=False,
 )

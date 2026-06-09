@@ -21,7 +21,7 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
 
-# Graceful shutdown: eventlet handles SIGTERM
+# Graceful shutdown: gevent handles SIGTERM
 STOPSIGNAL SIGTERM
 
 CMD ["sh", "-c", "flask db upgrade && python main.py"]
