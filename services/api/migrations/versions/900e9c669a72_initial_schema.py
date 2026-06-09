@@ -39,7 +39,7 @@ def upgrade():
     sa.Column('phone_number', sa.String(length=20), nullable=True),
     sa.Column('password_hash', sa.String(length=255), nullable=True),
     sa.Column('google_id', sa.String(length=100), nullable=True),
-    sa.Column('email_verified', sa.Boolean(), server_default=sa.text('0'), nullable=False),
+    sa.Column('email_verified', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('email_verified_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
