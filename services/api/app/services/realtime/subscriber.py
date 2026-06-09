@@ -185,7 +185,13 @@ def start_subscriber(app, socketio) -> threading.Thread:
         log.info("Redis subscriber starting (url=%s)", redis_url)
         while True:
             try:
-                client = redis.from_url(redis_url, decode_responses=True)
+                client = redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_keepalive=True,
+                    health_check_interval=30,
+                    retry_on_timeout=True,
+                )
                 pubsub = client.pubsub()
                 pubsub.subscribe("filing:new")
                 log.info("Redis subscriber connected — listening on filing:new")
