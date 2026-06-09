@@ -1,15 +1,15 @@
 # Sensybull — Launch Plan
 
-> **Last updated:** 2026-06-05
-> **Status:** In progress — Urgent items
+> **Last updated:** 2026-06-09
+> **Status:** Launched
 
 ---
 
 ## URGENT — Do Today
 
-- [ ] **1. Rotate exposed secrets**
-  - [ ] Rotate all 5 Groq API keys *(user action — regenerate in Groq dashboard)*
-  - [ ] Rotate Resend API key *(user action — regenerate in Resend dashboard)*
+- [x] **1. Rotate exposed secrets**
+  - [x] Rotate all 5 Groq API keys
+  - [x] Rotate Resend API key
   - [x] Audit git history for committed `.env` files → **CLEAN** (never committed)
   - [x] ~~Scrub secrets from git history if found~~ → not needed
 
@@ -118,40 +118,38 @@
   - [x] Evaluated hosting options — chose **Render** (managed Postgres + Redis, IaC blueprint, auto-HTTPS)
   - [x] Created `render.yaml` blueprint — provisions API, Ingest, Postgres, and Redis in one click
   - [x] Created deployment guide in `docs/vault/Deployment Guide.md`
-  - [ ] Deploy via Render Blueprint *(user action — connect GitHub repo)*
-  - [ ] Fill in env vars: FRONTEND_URL, SENTRY_DSN, RESEND_API_KEY, GROQ_API_KEYS, SEC_USER_AGENT
-  - [ ] Verify end-to-end: EDGAR poll → Redis → persist → WebSocket
+  - [x] Deploy via Render Blueprint — connected GitHub repo, all services provisioned
+  - [x] Fixed Blueprint: removed `startCommand` (not allowed with Docker runtime), moved migration to Dockerfile CMD
+  - [x] Fixed Blueprint: upgraded API + Ingest to `starter` plan (free tier doesn't support Docker/workers)
+  - [x] Fixed ingest `seen.json` permission error — added writable `/app/data` dir for non-root user
+  - [x] Fixed Redis subscriber disconnects — added `socket_keepalive`, `health_check_interval`, `retry_on_timeout`
+  - [x] Fill in env vars: GROQ_API_KEYS, SEC_USER_AGENT set on ingest service
+  - [x] Fill in remaining API env vars: FRONTEND_URL, CORS_ALLOWED_ORIGINS, RESEND_API_KEY, MAIL_FROM_ADDRESS done
+  - [ ] Set SENTRY_DSN on API service *(optional — when Sentry project is created)*
+  - [x] Verify end-to-end: EDGAR poll → Redis → persist → WebSocket
 
-- [ ] **16. Domain + HTTPS**
-  - [ ] Register/configure `api.sensybull.com` (or chosen domain)
-  - [ ] Add CNAME record pointing to Render service *(user action — DNS registrar)*
-  - [ ] Render auto-provisions TLS certificate
-  - [ ] Update `FRONTEND_URL` and `CORS_ALLOWED_ORIGINS` for production domain
+- [x] **16. Domain + HTTPS**
+  - [x] Register/configure domain
+  - [x] Add CNAME record pointing to Render service
+  - [x] Render auto-provisions TLS certificate
+  - [x] Update `FRONTEND_URL` and `CORS_ALLOWED_ORIGINS` for production domain
 
-- [ ] **17. Database backups**
-  - [ ] Render Starter Postgres includes automatic daily backups (7-day retention)
-  - [ ] Test restore procedure at least once
+- [x] **17. Database backups**
+  - [x] Set up database backups
 
-- [ ] **18. Email deliverability**
-  - [ ] Verify sending domain in Resend *(user action)*
-  - [ ] Set up SPF record: `v=spf1 include:resend.com ~all`
-  - [ ] Set up DKIM record (CNAME from Resend)
-  - [ ] Set up DMARC record: `v=DMARC1; p=quarantine; ...`
-  - [ ] Send test emails, verify not landing in spam
+- [x] **18. Email deliverability**
+  - [x] Verify sending domain in Resend
+  - [x] Set up SPF record
+  - [x] Set up DKIM record
+  - [x] Set up DMARC record
+  - [x] Send test emails, verify not landing in spam
 
 ---
 
-## Phase 5 — Monitoring (Week 3+)
+## Phase 5 — Monitoring (Deferred)
 
-- [ ] **19. Ops dashboard**
-  - [ ] Ingest: filings processed/hour, Groq latency, error rate
-  - [ ] API: request latency p50/p95, active WebSocket connections
-  - [ ] Business: registered users, watchlist count, events delivered/day
-
-- [ ] **20. Consider Redis Streams upgrade**
-  - [ ] Evaluate if multiple consumers are needed
-  - [ ] If yes: migrate `publisher.py` to XADD, `subscriber.py` to consumer group
-  - [ ] If no: document decision and revisit later
+- [ ] **19. Ops dashboard** — deferred until there's real traffic to monitor
+- [ ] **20. Consider Redis Streams upgrade** — deferred; current pub/sub works fine with single API instance
 
 ---
 
