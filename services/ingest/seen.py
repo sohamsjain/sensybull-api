@@ -3,7 +3,7 @@ import os
 import tempfile
 from datetime import datetime, timedelta, timezone
 
-SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen.json")
+SEEN_FILE = os.path.join(os.environ.get("DATA_DIR", os.path.dirname(os.path.abspath(__file__))), "seen.json")
 TTL_DAYS  = 30  # entries older than this are safe to prune
 
 
