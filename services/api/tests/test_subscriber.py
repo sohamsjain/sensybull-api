@@ -3,8 +3,6 @@
 import json
 from app.models.filing_event import FilingEvent
 from app.models.company import Company
-from app.models.event_type import EventType
-from app.models.catalyst import Catalyst
 from app.services.realtime.subscriber import _handle_event
 
 

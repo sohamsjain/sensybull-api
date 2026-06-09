@@ -11,7 +11,7 @@ contain the relevant company.
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 
 log = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ import os
 
 from flask import request
 from flask_jwt_extended import decode_token
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room
 
 log = logging.getLogger(__name__)
 

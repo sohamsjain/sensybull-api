@@ -9,7 +9,6 @@ GET  /events/company/<company_id>   events for one company (with optional tier f
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-import sqlalchemy as sa
 
 from app.models.filing_event import FilingEvent
 from app.models.event_type import EventType

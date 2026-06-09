@@ -32,7 +32,13 @@ def _fetch_sec_tickers(user_agent: str) -> list[dict]:
 def ensure_companies_loaded(app) -> None:
     """If the Company table is empty, fetch from SEC and bulk-insert."""
     with app.app_context():
-        count = db.session.query(Company.id).limit(1).count()
+        try:
+            count = db.session.query(Company.id).limit(1).count()
+        except Exception:
+            # Table may not exist yet (e.g. first `flask db upgrade` run)
+            db.session.rollback()
+            log.info("Company table not found — skipping SEC load (run migrations first)")
+            return
         if count > 0:
             log.info("Company table already populated — skipping SEC load")
             return

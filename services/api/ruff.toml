@@ -1,7 +1,13 @@
 [lint]
 select = ["E", "F", "W"]
-ignore = ["E501"]  # line length handled by formatter
+ignore = [
+    "E501",  # line length handled by formatter
+    "F821",  # false positives on SQLAlchemy string relationship annotations
+]
 
 [lint.per-file-ignores]
 "tests/*" = ["E402"]  # allow imports after os.environ in conftest
 "migrations/*" = ["E402", "F401"]
+"main.py" = ["E402"]  # imports must come after eventlet.monkey_patch()
+"console.py" = ["E402", "F401", "F403"]  # interactive console helper
+"scripts/*" = ["E402"]  # scripts set env vars before imports

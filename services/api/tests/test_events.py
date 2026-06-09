@@ -1,7 +1,6 @@
 """Tests for filing event endpoints."""
 
 from app.models.filing_event import FilingEvent
-from app.models.event_type import EventType
 
 
 class TestGetEvents:

@@ -3,7 +3,6 @@ eventlet.monkey_patch()
 
 import logging
 import os
-import uuid
 
 from pythonjsonlogger import jsonlogger
 
