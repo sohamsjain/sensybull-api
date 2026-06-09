@@ -1,6 +1,6 @@
 databases:
   - name: sensybull-db
-    plan: starter
+    plan: free
     databaseName: sensybull
     user: sensybull
     ipAllowList: []  # only internal access
