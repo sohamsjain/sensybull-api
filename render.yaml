@@ -10,7 +10,7 @@ services:
   - type: web
     name: sensybull-api
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./services/api/Dockerfile
     dockerContext: ./services/api
     healthCheckPath: /health
@@ -56,7 +56,7 @@ services:
   - type: worker
     name: sensybull-ingest
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./services/ingest/Dockerfile
     dockerContext: ./services/ingest
     envVars:
@@ -73,6 +73,6 @@ services:
   # ── Redis ─────────────────────────────────────────────────────────────
   - type: redis
     name: sensybull-redis
-    plan: starter
+    plan: free
     ipAllowList: []  # only internal access
     maxmemoryPolicy: allkeys-lru
