@@ -1,4 +1,3 @@
-from app.services.email.client import EmailMessage, MailClient
-from app.services.email.factory import get_mail_client
+from app.services.email.resend_client import EmailMessage, ResendClient
 
-__all__ = ['EmailMessage', 'MailClient', 'get_mail_client']
+__all__ = ['EmailMessage', 'ResendClient']

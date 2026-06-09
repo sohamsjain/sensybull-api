@@ -101,9 +101,8 @@ For transactional emails (verification, password reset) to reach inboxes reliabl
 | TXT   | `_dmarc.sensybull.com`        | `v=DMARC1; p=quarantine; rua=mailto:dmarc@sensybull.com` | DMARC |
 
 4. Click **Verify** in Resend after adding records (propagation takes 5–60 minutes).
-5. Update env vars:
+5. Update env var:
    - `MAIL_FROM_ADDRESS` → `alerts@sensybull.com` (or your chosen address)
-   - `MAIL_PROVIDER` → `resend`
 
 ### Test deliverability
 

@@ -64,7 +64,7 @@ Key settings loaded from environment:
 | `REDIS_URL` | Redis connection |
 | `GOOGLE_CLIENT_ID` | OAuth |
 | `FRONTEND_URL` | CORS origins + email links |
-| `MAIL_PROVIDER` | Email backend (console/smtp/resend) |
+| `RESEND_API_KEY` | Resend email API key |
 | `SEC_USER_AGENT` | SEC API identification |
 
 SQLite-specific: WAL mode and `check_same_thread=False` are configured in the engine options for concurrent access.
@@ -102,12 +102,8 @@ services/api/
 │   │   │   └── subscriber.py       # Redis listener thread
 │   │   ├── email/
 │   │   │   ├── sender.py            # High-level email dispatch
-│   │   │   ├── client.py            # Abstract email client
-│   │   │   ├── console_client.py    # Dev: print to stdout
-│   │   │   ├── smtp_client.py       # SMTP backend
-│   │   │   ├── resend_client.py     # Resend API backend
-│   │   │   ├── renderer.py          # Jinja2 templates
-│   │   │   └── factory.py           # Provider selection
+│   │   │   ├── resend_client.py     # Resend API client
+│   │   │   └── renderer.py          # Jinja2 templates
 │   │   └── company_loader.py        # SEC bulk company import
 │   └── utils/
 │       ├── schemas.py               # Marshmallow serializers

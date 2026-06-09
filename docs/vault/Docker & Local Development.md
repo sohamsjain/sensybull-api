@@ -122,7 +122,7 @@ SEC_USER_AGENT="Your Name your@email.com"
 
 # Optional
 DATABASE_URL=sqlite:///sensybull.db
-MAIL_PROVIDER=console           # console|smtp|resend
+# RESEND_API_KEY=               # Emails disabled when unset
 GOOGLE_CLIENT_ID=               # For OAuth
 FRONTEND_URL=http://localhost:3000
 ```

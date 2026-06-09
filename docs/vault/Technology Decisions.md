@@ -176,7 +176,7 @@ See [[Eventlet]] for more on how this works.
 
 **What:** Transactional email API.
 
-**Why Resend over SendGrid/Mailgun?** Resend has the simplest API, competitive pricing, and excellent deliverability. The pluggable email system (`MAIL_PROVIDER` config) also supports SMTP and console output for dev/testing.
+**Why Resend over SendGrid/Mailgun?** Resend has the simplest API, competitive pricing, and excellent deliverability. When `RESEND_API_KEY` is not set (local dev), emails are silently skipped.
 
 ---
 

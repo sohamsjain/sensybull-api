@@ -1,17 +1,41 @@
-from app.services.email.client import EmailMessage, MailClient
+"""Resend (resend.com) transactional email backend."""
+
+import logging
+from dataclasses import dataclass, field
+from typing import Optional
+
+import resend
+
+log = logging.getLogger(__name__)
 
 
-class ResendClient(MailClient):
-    """Resend (resend.com) transactional backend."""
+@dataclass
+class EmailMessage:
+    """A single transactional email ready to send."""
+    to: str
+    subject: str
+    html: str
+    text: str
+    from_address: str
+    from_name: str
+    reply_to: Optional[str] = None
+    headers: dict = field(default_factory=dict)
+
+    @property
+    def from_header(self) -> str:
+        """RFC 5322 'Name <addr>' header value."""
+        if self.from_name:
+            return f'{self.from_name} <{self.from_address}>'
+        return self.from_address
+
+
+class ResendClient:
+    """Sends transactional emails via Resend."""
 
     def __init__(self, api_key: str):
         if not api_key:
-            raise ValueError('RESEND_API_KEY is required for the resend provider')
-        # Imported lazily so the dependency is only required when selected.
-        import resend  # type: ignore
-
+            raise ValueError('RESEND_API_KEY is required')
         resend.api_key = api_key
-        self._resend = resend
 
     def send(self, message: EmailMessage) -> str:
         payload = {
@@ -26,6 +50,5 @@ class ResendClient(MailClient):
         if message.headers:
             payload['headers'] = message.headers
 
-        response = self._resend.Emails.send(payload)
-        # Resend returns {'id': '...'} on success.
+        response = resend.Emails.send(payload)
         return response.get('id') if isinstance(response, dict) else str(response)

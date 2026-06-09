@@ -142,13 +142,7 @@ Sensitive auth endpoints are rate-limited via Flask-Limiter:
 
 ## Email Service
 
-The email system is pluggable — configured via `MAIL_PROVIDER`:
-
-| Provider | Use Case |
-|---|---|
-| `console` | Development — prints to stdout |
-| `smtp` | Self-hosted SMTP server |
-| `resend` | Production — Resend API |
+Transactional emails are sent via **Resend**. When `RESEND_API_KEY` is not set (local dev), emails are silently skipped.
 
 **Templates:** Jinja2 HTML templates rendered by `email/renderer.py`. Includes verification, password reset, welcome, and password-changed emails.
 

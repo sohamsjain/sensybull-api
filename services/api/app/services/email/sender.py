@@ -3,14 +3,14 @@
 Use the `send_*` helpers from route handlers. They render the template,
 build an EmailMessage, and dispatch via a thread pool so the request is
 never blocked by mail delivery. All failures are logged and swallowed -
-auth flows must succeed even if the mail provider is temporarily down.
+auth flows must succeed even if Resend is temporarily down.
 """
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlencode, urljoin
 
 from flask import current_app
 
-from app.services.email.client import EmailMessage
+from app.services.email.resend_client import EmailMessage
 from app.services.email.renderer import render
 
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='mailer')
@@ -18,8 +18,15 @@ _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='mailer')
 
 def _deliver(app, message: EmailMessage) -> None:
     with app.app_context():
+        client = app.extensions.get('mail')
+        if client is None:
+            app.logger.debug(
+                'email skipped (no RESEND_API_KEY) to=%s subject=%r',
+                message.to, message.subject,
+            )
+            return
         try:
-            app.extensions['mail'].send(message)
+            client.send(message)
         except Exception:
             app.logger.exception(
                 'email send failed to=%s subject=%r', message.to, message.subject

@@ -13,7 +13,6 @@ os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-os.environ["MAIL_PROVIDER"] = "console"
 os.environ["SOCKETIO_ASYNC_MODE"] = "threading"
 
 from unittest.mock import patch

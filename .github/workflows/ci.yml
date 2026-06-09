@@ -80,7 +80,6 @@ jobs:
           JWT_SECRET_KEY: test-jwt-secret-ci
           DATABASE_URL: postgresql://test:test@localhost:5432/sensybull_test
           REDIS_URL: redis://localhost:6379/0
-          MAIL_PROVIDER: console
           SOCKETIO_ASYNC_MODE: threading
           PYTHONPATH: .
         run: pytest tests/ -v --tb=short

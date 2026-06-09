@@ -45,8 +45,6 @@ services:
           name: sensybull-redis
           type: redis
           property: connectionString
-      - key: MAIL_PROVIDER
-        value: resend
       - key: RESEND_API_KEY
         sync: false
       - key: MAIL_FROM_ADDRESS

@@ -49,7 +49,10 @@ def create_app(config_class=Config):
 
     class _RequestIdFilter(logging.Filter):
         def filter(self, record):
-            record.request_id = getattr(g, "request_id", "-")
+            try:
+                record.request_id = getattr(g, "request_id", "-")
+            except RuntimeError:
+                record.request_id = "-"
             return True
 
     app.logger.addFilter(_RequestIdFilter())
@@ -64,9 +67,14 @@ def create_app(config_class=Config):
             environment=app.config.get("SENTRY_ENVIRONMENT", "production"),
         )
 
-    # Register the transactional mail client.
-    from app.services.email import get_mail_client
-    app.extensions['mail'] = get_mail_client(app.config)
+    # Register the Resend mail client.
+    from app.services.email import ResendClient
+    api_key = app.config.get('RESEND_API_KEY')
+    if api_key:
+        app.extensions['mail'] = ResendClient(api_key=api_key)
+    else:
+        app.extensions['mail'] = None
+        app.logger.warning('RESEND_API_KEY not set — transactional emails disabled')
 
     if 'sqlite' in app.config['SQLALCHEMY_DATABASE_URI']:
         with app.app_context():
