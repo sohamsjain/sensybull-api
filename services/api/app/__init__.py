@@ -149,6 +149,10 @@ def create_app(config_class=Config):
             status = 503
         return jsonify({'status': 'ok' if status == 200 else 'degraded', **checks}), status
 
+    # Register CLI commands
+    from app.cli import register_cli
+    register_cli(app)
+
     # Ensure SEC companies are loaded (no-op if table already populated)
     from app.services.company_loader import ensure_companies_loaded
     ensure_companies_loaded(app)
