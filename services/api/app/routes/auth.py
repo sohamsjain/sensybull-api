@@ -7,6 +7,7 @@ from flask_jwt_extended import (
 from marshmallow import ValidationError
 
 from app import db, limiter
+from app.models.alert_preference import AlertPreference
 from app.models.auth_token import AuthToken, AuthTokenPurpose
 from app.models.user import User
 from app.services.email.sender import (
@@ -88,6 +89,8 @@ def register():
     user = User(name=data['name'], email=data['email'])
     user.set_password(data['password'])
 
+    user.alert_preference = AlertPreference()
+
     try:
         db.session.add(user)
         db.session.commit()
@@ -150,6 +153,7 @@ def google_login():
             name=name, email=email, google_id=google_id,
             email_verified=True, email_verified_at=datetime.now(timezone.utc),
         )
+        user.alert_preference = AlertPreference()
         db.session.add(user)
         is_new_user = True
     else:

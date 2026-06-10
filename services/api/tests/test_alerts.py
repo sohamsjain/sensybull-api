@@ -1,6 +1,6 @@
 """Tests for the alert notification system."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from app.models.alert_preference import AlertPreference
 from app.models.notification import Notification
