@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from marshmallow import ValidationError
+import sqlalchemy as sa
 from app import db
 from app.models.company import Company
 from app.utils.schemas import CompanySchema, CompanyCreateSchema
@@ -11,15 +12,60 @@ companies_schema = CompanySchema(many=True)
 create_schema = CompanyCreateSchema()
 
 
+def _search_query(q: str):
+    """Build a Company query that matches ticker and name, ordered by relevance.
+
+    Priority: exact ticker > ticker prefix > name contains.
+    """
+    term = q.strip()
+    query = Company.query.filter(
+        sa.or_(
+            Company.ticker.ilike(f'%{term}%'),
+            Company.name.ilike(f'%{term}%'),
+        )
+    )
+    # Order: exact ticker first, then ticker prefix, then everything else (name match)
+    relevance = sa.case(
+        (Company.ticker.ilike(term), 0),
+        (Company.ticker.ilike(f'{term}%'), 1),
+        else_=2,
+    )
+    return query.order_by(relevance, Company.name)
+
+
+@companies_bp.route('/search', methods=['GET'])
+@jwt_required()
+def search_companies():
+    """Lightweight typeahead endpoint — returns compact results (id, name, ticker)."""
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'error': 'q parameter is required'}), 400
+
+    limit = request.args.get('limit', 10, type=int)
+    limit = min(max(limit, 1), 50)
+
+    results = _search_query(q).limit(limit).all()
+    return jsonify({
+        'results': [
+            {'id': c.id, 'name': c.name, 'ticker': c.ticker}
+            for c in results
+        ],
+    })
+
+
 @companies_bp.route('/', methods=['GET'])
 @jwt_required()
 def get_companies():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
-    ticker = request.args.get('ticker')
-    query = Company.query
-    if ticker:
-        query = query.filter(Company.ticker.ilike(f'%{ticker}%'))
+
+    q = request.args.get('q', '').strip() or request.args.get('ticker', '').strip()
+
+    if q:
+        query = _search_query(q)
+    else:
+        query = Company.query.order_by(Company.name)
+
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
     return jsonify({
         'companies': companies_schema.dump(pagination.items),
