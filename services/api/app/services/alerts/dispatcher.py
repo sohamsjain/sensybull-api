@@ -47,6 +47,7 @@ def _dispatch(app, event_id: str, user_ids: frozenset[str]) -> None:
 def _dispatch_inner(app, event_id: str, user_ids: frozenset[str]) -> None:
     from app import db
     from app.models.alert_preference import AlertPreference
+    from app.models.company_read_state import CompanyReadState
     from app.models.filing_event import FilingEvent
     from app.models.notification import Notification
     from app.models.user import User
@@ -67,6 +68,22 @@ def _dispatch_inner(app, event_id: str, user_ids: frozenset[str]) -> None:
     if not prefs:
         log.debug('Alert dispatcher: no matching preferences for event %s', event_id)
         return
+
+    # Users who muted this company's chat get no alerts for it
+    if event.company_id:
+        muted_user_ids = {
+            rs.user_id
+            for rs in CompanyReadState.query.filter(
+                CompanyReadState.company_id == event.company_id,
+                CompanyReadState.user_id.in_([p.user_id for p in prefs]),
+                CompanyReadState.muted.is_(True),
+            )
+        }
+        if muted_user_ids:
+            prefs = [p for p in prefs if p.user_id not in muted_user_ids]
+            if not prefs:
+                log.debug('Alert dispatcher: all users muted company for event %s', event_id)
+                return
 
     # Build user lookup
     pref_user_ids = [p.user_id for p in prefs]
