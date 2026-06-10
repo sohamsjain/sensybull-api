@@ -1,0 +1,21 @@
+{{ tier_label }} PRIORITY FILING ALERT
+{{ company_name }}{% if ticker %} ({{ ticker }}){% endif %}
+
+{{ headline }}
+
+{% if summary %}{{ summary }}
+
+{% endif %}{% if summary_bullets %}{% for bullet in summary_bullets %}- {{ bullet }}
+{% endfor %}
+{% endif %}{% if event_types %}Event types: {{ event_types | join(", ") }}
+{% endif %}{% if filing_date %}Filed: {{ filing_date.strftime('%B %d, %Y') if filing_date.strftime is defined else filing_date }}
+{% endif %}
+View details: {{ event_url }}
+{% if edgar_url %}View on EDGAR: {{ edgar_url }}
+{% endif %}
+---
+You received this because {{ company_name }} is on your watchlist.
+Manage alert preferences: {{ frontend_url }}/settings/alerts
+
+-- {{ app_name }}
+Need help? {{ support_email }}

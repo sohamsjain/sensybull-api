@@ -154,6 +154,10 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         # and the existing client.html, keeping backward compat)
         socketio.emit("filing_event", payload, room="public", namespace="/feed")
 
+        # Dispatch alert notifications (async — does not block the subscriber)
+        from app.services.alerts.dispatcher import trigger_alerts
+        trigger_alerts(app, event.id, user_ids)
+
         log.info(
             "Subscriber: stored + emitted edgar_id=%s ticker=%s tier=%d users=%d",
             edgar_id, ticker or "—", max_tier, len(user_ids),

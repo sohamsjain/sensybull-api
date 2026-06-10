@@ -19,6 +19,8 @@ class User(BaseModel):
     email_verified_at: so.Mapped[Optional[datetime]] = so.mapped_column(sa.DateTime(timezone=True), nullable=True)
 
     watchlists: so.Mapped[List["Watchlist"]] = so.relationship(back_populates='user', cascade='all, delete-orphan')
+    alert_preference: so.Mapped[Optional["AlertPreference"]] = so.relationship(
+        back_populates='user', uselist=False, cascade='all, delete-orphan')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)

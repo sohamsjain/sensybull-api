@@ -52,6 +52,9 @@ class Config:
     # Rate limiting (use redis://... in production for cross-instance limits)
     RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI') or 'memory://'
 
+    # Alerts
+    ALERT_EMAIL_SUBJECT_PREFIX = os.environ.get('ALERT_EMAIL_SUBJECT_PREFIX') or '[Sensybull]'
+
     # Logging
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
 

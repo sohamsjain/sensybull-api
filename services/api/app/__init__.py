@@ -90,6 +90,7 @@ def create_app(config_class=Config):
     from app.routes.watchlists import watchlists_bp
     from app.routes.filings import filings_bp
     from app.routes.events import events_bp
+    from app.routes.alerts import alerts_bp
 
     # API v1 routes
     API_V1 = '/api/v1'
@@ -99,6 +100,7 @@ def create_app(config_class=Config):
     app.register_blueprint(watchlists_bp, url_prefix=f'{API_V1}/watchlists')
     app.register_blueprint(filings_bp, url_prefix=f'{API_V1}/filings')
     app.register_blueprint(events_bp, url_prefix=f'{API_V1}/events')
+    app.register_blueprint(alerts_bp, url_prefix=f'{API_V1}/alerts')
 
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)

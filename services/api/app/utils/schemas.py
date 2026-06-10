@@ -99,6 +99,36 @@ class FilingCreateSchema(Schema):
     document_url = fields.Str(validate=validate.Length(max=500))
 
 
+class AlertPreferenceSchema(Schema):
+    id = fields.Str(dump_only=True)
+    enabled = fields.Bool()
+    max_tier = fields.Int(validate=validate.Range(min=1, max=3))
+    channels = fields.Raw(attribute='channels_json')
+    created_at = fields.DateTime(dump_only=True)
+    updated_at = fields.DateTime(dump_only=True)
+
+
+class AlertPreferenceUpdateSchema(Schema):
+    enabled = fields.Bool()
+    max_tier = fields.Int(validate=validate.Range(min=1, max=3))
+    channels = fields.Raw()
+
+
+class NotificationSchema(Schema):
+    id = fields.Str(dump_only=True)
+    filing_event_id = fields.Str(dump_only=True)
+    channel = fields.Str(dump_only=True)
+    status = fields.Str(dump_only=True)
+    error_message = fields.Str(dump_only=True)
+    sent_at = fields.DateTime(dump_only=True)
+    created_at = fields.DateTime(dump_only=True)
+    filing_event = fields.Nested(
+        'FilingEventSchema',
+        only=('id', 'ticker', 'company_name', 'max_tier', 'event_types', 'received_at'),
+        dump_only=True,
+    )
+
+
 class EventTypeSchema(Schema):
     id         = fields.Str(dump_only=True)
     type_name  = fields.Str(dump_only=True)
