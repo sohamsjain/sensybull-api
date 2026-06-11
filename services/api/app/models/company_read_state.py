@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import sqlalchemy as sa
 import sqlalchemy.orm as so
+from sqlalchemy.exc import IntegrityError
 from app.models.base import BaseModel
 
 
@@ -43,16 +44,46 @@ class CompanyReadState(BaseModel):
     )
 
     @staticmethod
+    def _find(session, user_id: str, company_id: str) -> "CompanyReadState | None":
+        return session.query(CompanyReadState).filter_by(
+            user_id=user_id, company_id=company_id).first()
+
+    @staticmethod
+    def _get_or_create(session, user_id: str, company_id: str,
+                       **defaults) -> "CompanyReadState":
+        """Get the row for (user, company), creating it with defaults if missing.
+
+        Concurrent-safe: the INSERT runs inside a savepoint, so if another
+        request creates the row first, only the savepoint rolls back (the
+        caller's pending changes survive) and the winning row is returned.
+        Does not commit; the caller owns the transaction.
+        """
+        state = CompanyReadState._find(session, user_id, company_id)
+        if state is not None:
+            return state
+        try:
+            with session.begin_nested():
+                state = CompanyReadState(
+                    user_id=user_id, company_id=company_id, **defaults)
+                session.add(state)
+            return state
+        except IntegrityError:
+            return CompanyReadState._find(session, user_id, company_id)
+
+    @staticmethod
+    def ensure(session, user_id: str, company_id: str,
+               **defaults) -> "CompanyReadState":
+        """Create the row with defaults if missing; never modifies an existing row."""
+        return CompanyReadState._get_or_create(
+            session, user_id, company_id, **defaults)
+
+    @staticmethod
     def upsert(session, user_id: str, company_id: str, **values) -> "CompanyReadState":
-        """Get-or-create the row for (user, company), applying any values.
+        """Get-or-create the row for (user, company), applying the given values.
 
         Does not commit; the caller owns the transaction.
         """
-        state = session.query(CompanyReadState).filter_by(
-            user_id=user_id, company_id=company_id).first()
-        if state is None:
-            state = CompanyReadState(user_id=user_id, company_id=company_id)
-            session.add(state)
+        state = CompanyReadState._get_or_create(session, user_id, company_id)
         for field, value in values.items():
             setattr(state, field, value)
         return state

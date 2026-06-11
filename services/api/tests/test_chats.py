@@ -203,6 +203,83 @@ class TestWatchlistAddHook:
         assert abs((state.last_read_at.replace(tzinfo=timezone.utc) - old_read).total_seconds()) < 1
 
 
+# ── Concurrent read-state creation ───────────────────────────────────
+
+
+class TestReadStateRace:
+    """Two requests can race to create the same (user, company) row; the
+    loser's INSERT must recover via the unique constraint, not 500."""
+
+    def _patch_find_miss_once(self):
+        """Make the first _find lookup miss, simulating a row created by a
+        concurrent request between the SELECT and the INSERT."""
+        real_find = CompanyReadState._find
+        calls = []
+
+        def fake_find(session, user_id, company_id):
+            if not calls:
+                calls.append(1)
+                return None
+            return real_find(session, user_id, company_id)
+
+        return patch.object(CompanyReadState, '_find', staticmethod(fake_find))
+
+    def test_upsert_recovers_from_lost_race(self, db_session, sample_user, sample_company):
+        existing = CompanyReadState(
+            user_id=sample_user.id, company_id=sample_company.id, muted=False)
+        db_session.session.add(existing)
+        db_session.session.commit()
+
+        with self._patch_find_miss_once():
+            state = CompanyReadState.upsert(
+                db_session.session, sample_user.id, sample_company.id, muted=True)
+        db_session.session.commit()
+
+        assert state.id == existing.id
+        assert state.muted is True
+        assert CompanyReadState.query.filter_by(
+            user_id=sample_user.id, company_id=sample_company.id).count() == 1
+
+    def test_ensure_lost_race_preserves_existing_row(self, db_session, sample_user, sample_company):
+        old_read = datetime.now(timezone.utc) - timedelta(days=3)
+        existing = CompanyReadState(
+            user_id=sample_user.id, company_id=sample_company.id,
+            last_read_at=old_read, muted=True)
+        db_session.session.add(existing)
+        db_session.session.commit()
+
+        with self._patch_find_miss_once():
+            state = CompanyReadState.ensure(
+                db_session.session, sample_user.id, sample_company.id,
+                last_read_at=datetime.now(timezone.utc))
+        db_session.session.commit()
+
+        assert state.id == existing.id
+        assert state.muted is True
+        assert abs((state.last_read_at.replace(tzinfo=timezone.utc) - old_read).total_seconds()) < 1
+
+    def test_lost_race_keeps_callers_pending_changes(self, client, auth_headers, db_session,
+                                                     sample_user, sample_watchlist,
+                                                     sample_company_2):
+        """A lost race inside add_company must not roll back the watchlist append."""
+        existing = CompanyReadState(
+            user_id=sample_user.id, company_id=sample_company_2.id, muted=True)
+        db_session.session.add(existing)
+        db_session.session.commit()
+
+        with self._patch_find_miss_once():
+            resp = client.post(
+                f'/api/v1/watchlists/{sample_watchlist.id}/companies',
+                headers=auth_headers, json={'company_id': sample_company_2.id})
+
+        assert resp.status_code == 200
+        tickers = {c['ticker'] for c in resp.get_json()['watchlist']['companies']}
+        assert 'TSLA' in tickers
+        state = CompanyReadState.query.filter_by(
+            user_id=sample_user.id, company_id=sample_company_2.id).first()
+        assert state.muted is True  # existing row untouched
+
+
 # ── Dispatcher respects mute ─────────────────────────────────────────
 
 

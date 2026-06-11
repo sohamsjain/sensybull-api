@@ -118,12 +118,9 @@ def add_company(watchlist_id):
         # Start the chat "read" so a freshly added company shows no unread
         # backlog. Never reset an existing state (e.g. re-add on a second
         # watchlist must not clear genuine unreads).
-        existing_state = CompanyReadState.query.filter_by(
-            user_id=user_id, company_id=company.id).first()
-        if existing_state is None:
-            db.session.add(CompanyReadState(
-                user_id=user_id, company_id=company.id,
-                last_read_at=datetime.now(timezone.utc)))
+        CompanyReadState.ensure(
+            db.session, user_id, company.id,
+            last_read_at=datetime.now(timezone.utc))
         db.session.commit()
         return jsonify({'message': 'Company added to watchlist', 'watchlist': watchlist_schema.dump(watchlist)})
     except Exception:
