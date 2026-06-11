@@ -90,7 +90,7 @@ services:
       - key: SEC_USER_AGENT
         sync: false
     buildCommand: ""
-    startCommand: "flask db upgrade && flask sync-companies"
+    startCommand: "flask db upgrade && flask sync-companies && flask sync-logos"
 
   # ── Redis ─────────────────────────────────────────────────────────────
   - type: redis

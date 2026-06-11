@@ -133,6 +133,7 @@ def get_chats():
                 'ticker': company.ticker,
                 'name': company.name,
                 'cik': company.cik,
+                'logo_url': company.logo_url,
             },
             'last_event': _event_preview(latest) if latest else None,
             'last_activity_at': _iso(latest.created_at) if latest else None,

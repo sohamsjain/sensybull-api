@@ -61,6 +61,9 @@ class Config:
     VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
     VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT')  # e.g. mailto:support@sensybull.com
 
+    # Benzinga Logo API (company brand marks; server-side only)
+    BENZINGA_API_KEY = os.environ.get('BENZINGA_API_KEY')
+
     # Logging
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
 
