@@ -1,9 +1,12 @@
+from datetime import datetime, timezone
+
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from marshmallow import ValidationError
 from app import db
 from app.models.watchlist import Watchlist
 from app.models.company import Company
+from app.models.company_read_state import CompanyReadState
 from app.utils.schemas import WatchlistSchema, WatchlistCreateSchema
 
 watchlists_bp = Blueprint('watchlists', __name__)
@@ -112,6 +115,12 @@ def add_company(watchlist_id):
 
     try:
         watchlist.companies.append(company)
+        # Start the chat "read" so a freshly added company shows no unread
+        # backlog. Never reset an existing state (e.g. re-add on a second
+        # watchlist must not clear genuine unreads).
+        CompanyReadState.ensure(
+            db.session, user_id, company.id,
+            last_read_at=datetime.now(timezone.utc))
         db.session.commit()
         return jsonify({'message': 'Company added to watchlist', 'watchlist': watchlist_schema.dump(watchlist)})
     except Exception:
