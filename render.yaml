@@ -76,7 +76,7 @@ services:
     runtime: docker
     plan: starter
     schedule: "0 6 * * *"  # daily at 06:00 UTC
-    dockerfilePath: ./services/api/Dockerfile
+    dockerfilePath: ./services/api/Dockerfile.cron
     dockerContext: ./services/api
     envVars:
       - key: DATABASE_URL
@@ -89,8 +89,6 @@ services:
         generateValue: true
       - key: SEC_USER_AGENT
         sync: false
-    buildCommand: ""
-    startCommand: "flask db upgrade && flask sync-companies"
 
   # ── Redis ─────────────────────────────────────────────────────────────
   - type: redis
