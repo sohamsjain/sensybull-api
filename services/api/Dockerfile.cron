@@ -14,4 +14,4 @@ COPY . .
 RUN adduser --disabled-password --no-create-home appuser
 USER appuser
 
-CMD ["sh", "-c", "flask db upgrade && flask sync-companies"]
+CMD ["sh", "-c", "flask db upgrade && flask sync-companies && flask sync-logos"]

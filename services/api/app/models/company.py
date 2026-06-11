@@ -13,6 +13,8 @@ class Company(BaseModel):
     cik: so.Mapped[Optional[str]] = so.mapped_column(sa.String(20), nullable=True, index=True)
     sic: so.Mapped[Optional[str]] = so.mapped_column(sa.String(10), nullable=True)
     state_of_incorporation: so.Mapped[Optional[str]] = so.mapped_column(sa.String(100), nullable=True)
+    # Brand mark URL (synced from the Benzinga Logo API; see services/logo_sync.py)
+    logo_url: so.Mapped[Optional[str]] = so.mapped_column(sa.Text, nullable=True)
 
     filings: so.Mapped[List["Filing"]] = so.relationship(back_populates='company', cascade='all, delete-orphan')
     watchlists: so.Mapped[List["Watchlist"]] = so.relationship(

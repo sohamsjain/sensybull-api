@@ -49,6 +49,7 @@ class CompanySchema(Schema):
     cik = fields.Str(validate=validate.Length(max=20))
     sic = fields.Str(validate=validate.Length(max=10))
     state_of_incorporation = fields.Str(validate=validate.Length(max=100))
+    logo_url = fields.Str(dump_only=True, allow_none=True)
     created_at = fields.DateTime(dump_only=True)
     filings = fields.List(fields.Nested('FilingSchema', exclude=('company',)), dump_only=True)
 
