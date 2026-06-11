@@ -159,8 +159,9 @@ def create_app(config_class=Config):
     from app.services.company_loader import ensure_companies_loaded
     ensure_companies_loaded(app)
 
-    # Start Redis subscriber (no-op if already running in this process)
-    from app.services.realtime.subscriber import start_subscriber
-    start_subscriber(app, socketio)
+    # Start Redis subscriber (skip when no Redis is configured, e.g. cron jobs)
+    if os.environ.get("REDIS_URL"):
+        from app.services.realtime.subscriber import start_subscriber
+        start_subscriber(app, socketio)
 
     return app
