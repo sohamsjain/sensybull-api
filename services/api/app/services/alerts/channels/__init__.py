@@ -2,6 +2,7 @@
 
 from app.services.alerts.channels.base import NotificationChannel
 from app.services.alerts.channels.email import EmailChannel
+from app.services.alerts.channels.push import PushChannel
 
 _CHANNELS: dict[str, NotificationChannel] = {}
 
@@ -12,6 +13,7 @@ def _register(channel: NotificationChannel) -> None:
 
 # Register built-in channels
 _register(EmailChannel())
+_register(PushChannel())
 
 
 def get_channel(name: str) -> NotificationChannel | None:
