@@ -1,9 +1,10 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from marshmallow import ValidationError
 from app import db
 from app.models.alert_preference import AlertPreference
 from app.models.notification import Notification
+from app.models.push_subscription import PushSubscription
 from app.services.alerts.channels import all_channel_names
 from app.utils.schemas import (
     AlertPreferenceSchema,
@@ -104,3 +105,59 @@ def get_notifications():
 def list_channels():
     """List all available notification channel names."""
     return jsonify({'channels': all_channel_names()})
+
+
+# ── Web Push subscriptions ───────────────────────────────────────────
+
+
+@alerts_bp.route('/push/public-key', methods=['GET'])
+@jwt_required()
+def push_public_key():
+    """VAPID public key the browser needs to subscribe. Null if push isn't configured."""
+    return jsonify({'public_key': current_app.config.get('VAPID_PUBLIC_KEY') or None})
+
+
+@alerts_bp.route('/push/subscriptions', methods=['POST'])
+@jwt_required()
+def create_push_subscription():
+    """Register (or re-claim) a browser's push subscription for this user."""
+    user_id = get_jwt_identity()
+    data = request.json or {}
+    endpoint = data.get('endpoint')
+    keys = data.get('keys') or {}
+    if not endpoint or not keys.get('p256dh') or not keys.get('auth'):
+        return jsonify({'error': 'endpoint and keys.p256dh/keys.auth are required'}), 400
+
+    sub = PushSubscription.query.filter_by(endpoint=endpoint).first()
+    created = sub is None
+    if created:
+        sub = PushSubscription(endpoint=endpoint, user_id=user_id,
+                               p256dh=keys['p256dh'], auth=keys['auth'])
+        db.session.add(sub)
+    else:
+        # Same browser re-subscribed (possibly under a different account)
+        sub.user_id = user_id
+        sub.p256dh = keys['p256dh']
+        sub.auth = keys['auth']
+    try:
+        db.session.commit()
+        return jsonify({'message': 'Subscribed'}), 201 if created else 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to save subscription'}), 500
+
+
+@alerts_bp.route('/push/subscriptions', methods=['DELETE'])
+@jwt_required()
+def delete_push_subscription():
+    """Remove this browser's push subscription."""
+    user_id = get_jwt_identity()
+    endpoint = (request.json or {}).get('endpoint')
+    if not endpoint:
+        return jsonify({'error': 'endpoint is required'}), 400
+
+    sub = PushSubscription.query.filter_by(endpoint=endpoint, user_id=user_id).first()
+    if sub:
+        db.session.delete(sub)
+        db.session.commit()
+    return jsonify({'message': 'Unsubscribed'})

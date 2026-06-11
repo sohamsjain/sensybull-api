@@ -25,3 +25,4 @@ gevent-websocket>=0.10.1
 psycopg2-binary>=2.9.9
 python-json-logger>=2.0.0
 sentry-sdk[flask]>=2.0.0
+pywebpush>=2.0.0

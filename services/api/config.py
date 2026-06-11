@@ -55,6 +55,12 @@ class Config:
     # Alerts
     ALERT_EMAIL_SUBJECT_PREFIX = os.environ.get('ALERT_EMAIL_SUBJECT_PREFIX') or '[Sensybull]'
 
+    # Web Push (generate with: python -c "from py_vapid import Vapid02; v=Vapid02(); v.generate_keys(); ...")
+    # or: npx web-push generate-vapid-keys
+    VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY')
+    VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
+    VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT')  # e.g. mailto:support@sensybull.com
+
     # Logging
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
 
