@@ -5,7 +5,7 @@ frontend only ever sees the signed image URLs we store here. We request
 square icon "marks" in dark-theme variants first — they're designed for
 dark UIs and avoid the white-box-in-a-circle problem entirely.
 
-Docs: https://docs.benzinga.com (Logo API v2.1, /api/v2.1/logos/sync)
+Docs: https://docs.benzinga.com (Logo API v2.1, /api/v2.1/logos/search)
 """
 
 import logging
@@ -14,7 +14,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-BENZINGA_LOGOS_URL = 'https://api.benzinga.com/api/v2.1/logos/sync'
+BENZINGA_LOGOS_URL = 'https://api.benzinga.com/api/v2.1/logos/search'
 
 # Square icon marks for dark UIs first, wordmark logos as a last resort
 FIELD_PRIORITY = [
@@ -58,6 +58,8 @@ def sync_logos(api_key: str, only_watchlisted: bool = True) -> tuple[int, int]:
     tickers = sorted(by_ticker)
     updated = 0
 
+    seen: set[str] = set()
+
     for i in range(0, len(tickers), BATCH_SIZE):
         chunk = tickers[i:i + BATCH_SIZE]
         try:
@@ -74,15 +76,23 @@ def sync_logos(api_key: str, only_watchlisted: bool = True) -> tuple[int, int]:
             log.exception('Logo sync: batch %d-%d failed — skipping', i, i + len(chunk))
             continue
 
-        for entry in (resp.json() or {}).get('data') or []:
-            url = _pick_url(entry.get('fields') or {})
+        body = resp.json()
+        entries = body.get('data', body) if isinstance(body, dict) else body
+        for entry in entries or []:
+            raw = entry.get('files') or entry.get('fields') or {}
+            url = _pick_url(raw)
             if not url:
                 continue
             for security in entry.get('securities') or []:
-                company = by_ticker.get((security.get('symbol') or '').upper())
+                ticker = (security.get('symbol') or '').upper()
+                if ticker in seen:
+                    continue
+                company = by_ticker.get(ticker)
                 if company and company.logo_url != url:
                     company.logo_url = url
                     updated += 1
+                if company:
+                    seen.add(ticker)
         db.session.commit()
 
     log.info('Logo sync: updated %d of %d companies', updated, len(tickers))

@@ -12,8 +12,8 @@ def _benzinga_response(entries):
     return resp
 
 
-def _entry(symbol, fields):
-    return {'fields': fields, 'securities': [{'symbol': symbol}]}
+def _entry(symbol, files):
+    return {'files': files, 'securities': [{'symbol': symbol}]}
 
 
 class TestLogoSync:
@@ -32,6 +32,37 @@ class TestLogoSync:
         assert params['token'] == 'test-token'
         assert params['search_keys'] == 'AAPL'
         assert params['search_keys_type'] == 'symbol'
+
+    def test_handles_legacy_fields_key(self, db_session, sample_watchlist, sample_company):
+        """API v2.1 may return 'fields' instead of 'files' — both must work."""
+        entries = [{'fields': {'mark_dark': 'https://img/mark.png'},
+                    'securities': [{'symbol': 'AAPL'}]}]
+        with patch('app.services.logo_sync.requests.get',
+                   return_value=_benzinga_response(entries)):
+            updated, _ = sync_logos('t')
+        assert updated == 1
+        assert sample_company.logo_url == 'https://img/mark.png'
+
+    def test_handles_bare_array_response(self, db_session, sample_watchlist, sample_company):
+        """Some API versions return a bare JSON array instead of {data: [...]}."""
+        resp = Mock()
+        resp.json.return_value = [_entry('AAPL', {'mark_dark': 'https://img/mark.png'})]
+        resp.raise_for_status.return_value = None
+        with patch('app.services.logo_sync.requests.get', return_value=resp):
+            updated, _ = sync_logos('t')
+        assert updated == 1
+        assert sample_company.logo_url == 'https://img/mark.png'
+
+    def test_duplicate_entries_only_counted_once(self, db_session, sample_watchlist, sample_company):
+        entries = [
+            _entry('AAPL', {'mark_dark': 'https://img/v1.png'}),
+            _entry('AAPL', {'mark_dark': 'https://img/v2.png'}),
+        ]
+        with patch('app.services.logo_sync.requests.get',
+                   return_value=_benzinga_response(entries)):
+            updated, _ = sync_logos('t')
+        assert updated == 1
+        assert sample_company.logo_url == 'https://img/v1.png'
 
     def test_watchlisted_only_by_default(self, db_session, sample_watchlist,
                                          sample_company, sample_company_2):
