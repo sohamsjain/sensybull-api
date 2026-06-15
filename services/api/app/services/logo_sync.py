@@ -5,7 +5,7 @@ frontend only ever sees the signed image URLs we store here. We request
 square icon "marks" in dark-theme variants first — they're designed for
 dark UIs and avoid the white-box-in-a-circle problem entirely.
 
-Docs: https://docs.benzinga.com (Logo API v2.1, /api/v2.1/logos/search)
+Docs: https://docs.benzinga.com (Logo API v2, /api/v2/logos/search)
 """
 
 import logging
@@ -14,7 +14,7 @@ import requests
 
 log = logging.getLogger(__name__)
 
-BENZINGA_LOGOS_URL = 'https://api.benzinga.com/api/v2.1/logos/search'
+BENZINGA_LOGOS_URL = 'https://api.benzinga.com/api/v2/logos/search'
 
 # Square icon marks for dark UIs first, wordmark logos as a last resort
 FIELD_PRIORITY = [
