@@ -13,6 +13,8 @@ import logging
 import threading
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
+
 log = logging.getLogger(__name__)
 
 
@@ -123,6 +125,10 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         try:
             db.session.add(event)
             db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            log.debug("Subscriber: duplicate edgar_id=%s — skipped (race)", edgar_id)
+            return
         except Exception:
             db.session.rollback()
             log.exception("Subscriber: DB commit failed for edgar_id=%s", edgar_id)
