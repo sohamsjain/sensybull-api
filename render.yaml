@@ -89,8 +89,6 @@ services:
         generateValue: true
       - key: SEC_USER_AGENT
         sync: false
-      - key: BENZINGA_API_KEY
-        sync: false
 
   # ── Redis ─────────────────────────────────────────────────────────────
   - type: redis
