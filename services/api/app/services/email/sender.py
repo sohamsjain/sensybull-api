@@ -114,6 +114,23 @@ def send_password_reset(user, raw_token: str) -> None:
     _send_async(msg)
 
 
+def send_magic_link(user, raw_token: str) -> None:
+    expires_minutes = current_app.config.get('MAGIC_LINK_TOKEN_MINUTES', 15)
+    ctx = _base_context()
+    ctx.update({
+        'user_name': user.name,
+        'magic_link_url': _build_link('magic-link/verify', token=raw_token),
+        'expires_minutes': expires_minutes,
+    })
+    msg = _build_message(
+        to=user.email,
+        subject=f"Sign in to {ctx['app_name']}",
+        template='magic_link',
+        context=ctx,
+    )
+    _send_async(msg)
+
+
 def send_password_changed(user) -> None:
     ctx = _base_context()
     ctx.update({'user_name': user.name})

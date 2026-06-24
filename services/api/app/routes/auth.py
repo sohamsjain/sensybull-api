@@ -11,7 +11,8 @@ from app.models.alert_preference import AlertPreference
 from app.models.auth_token import AuthToken, AuthTokenPurpose
 from app.models.user import User
 from app.services.email.sender import (
-    send_password_changed, send_password_reset, send_verification, send_welcome,
+    send_magic_link, send_password_changed, send_password_reset,
+    send_verification, send_welcome,
 )
 from app.utils.auth import verify_google_token
 from app.utils.schemas import (
@@ -207,6 +208,83 @@ def get_current_user():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     return jsonify({'user': user_schema.dump(user)})
+
+
+# ---------- magic link (passwordless email login) --------------------------
+
+@auth_bp.route('/magic-link', methods=['POST'])
+@limiter.limit('5 per hour')
+def request_magic_link():
+    try:
+        data = email_only_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify({'error': 'Validation error', 'details': e.messages}), 400
+
+    user = User.query.filter_by(email=data['email']).first()
+    if user:
+        try:
+            _invalidate_tokens(user.id, AuthTokenPurpose.MAGIC_LINK)
+            raw = generate_token()
+            minutes = current_app.config.get('MAGIC_LINK_TOKEN_MINUTES', 15)
+            token = AuthToken(
+                user_id=user.id,
+                token_hash=hash_token(raw),
+                purpose=AuthTokenPurpose.MAGIC_LINK,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=minutes),
+                ip=request.remote_addr,
+                user_agent=(request.user_agent.string if request.user_agent else None),
+            )
+            db.session.add(token)
+            db.session.commit()
+            send_magic_link(user, raw)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                'Failed to issue magic-link token for user_id=%s', user.id
+            )
+
+    return jsonify({
+        'message': 'If an account exists for that email, a sign-in link has been sent.'
+    })
+
+
+@auth_bp.route('/magic-link/verify', methods=['POST'])
+@limiter.limit('10 per hour')
+def verify_magic_link():
+    try:
+        data = token_schema.load(request.json)
+    except ValidationError as e:
+        return jsonify({'error': 'Validation error', 'details': e.messages}), 400
+
+    token = _lookup_valid_token(data['token'], AuthTokenPurpose.MAGIC_LINK)
+    if not token:
+        return jsonify({'error': 'Invalid or expired link'}), 400
+
+    user = User.query.get(token.user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    token.mark_used()
+    _invalidate_tokens(user.id, AuthTokenPurpose.MAGIC_LINK)
+
+    if not user.email_verified:
+        user.email_verified = True
+        user.email_verified_at = datetime.now(timezone.utc)
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to verify magic link'}), 500
+
+    access_token = create_access_token(identity=user.id)
+    refresh_token = create_refresh_token(identity=user.id)
+    return jsonify({
+        'message': 'Login successful',
+        'user': user_schema.dump(user),
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+    })
 
 
 # ---------- email verification ---------------------------------------------
