@@ -58,17 +58,22 @@ def get_current_user():
         return None
 
 
+def _fetch_jwk(jwks_url, kid):
+    """Fetch a JWK by key ID from a JWKS endpoint."""
+    response = requests.get(jwks_url, timeout=10)
+    for k in response.json().get('keys', []):
+        if k['kid'] == kid:
+            return k
+    return None
+
+
 def verify_google_token(token):
     try:
-        response = requests.get('https://www.googleapis.com/oauth2/v3/certs')
-        keys = response.json()
         unverified_header = pyjwt.get_unverified_header(token)
-        key_id = unverified_header.get('kid')
-        key = None
-        for k in keys['keys']:
-            if k['kid'] == key_id:
-                key = k
-                break
+        key = _fetch_jwk(
+            'https://www.googleapis.com/oauth2/v3/certs',
+            unverified_header.get('kid'),
+        )
         if not key:
             return None
         public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(key)
@@ -79,4 +84,25 @@ def verify_google_token(token):
         return payload
     except Exception as e:
         log.warning("Google token verification failed: %s", e)
+        return None
+
+
+def verify_apple_token(token):
+    try:
+        unverified_header = pyjwt.get_unverified_header(token)
+        key = _fetch_jwk(
+            'https://appleid.apple.com/auth/keys',
+            unverified_header.get('kid'),
+        )
+        if not key:
+            return None
+        public_key = pyjwt.algorithms.RSAAlgorithm.from_jwk(key)
+        payload = pyjwt.decode(
+            token, public_key, algorithms=['RS256'],
+            audience=current_app.config['APPLE_CLIENT_ID'],
+            issuer='https://appleid.apple.com',
+        )
+        return payload
+    except Exception as e:
+        log.warning("Apple token verification failed: %s", e)
         return None
