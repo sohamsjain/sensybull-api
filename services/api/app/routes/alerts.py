@@ -231,8 +231,13 @@ def update_channel_config(channel_name):
     if not data or not isinstance(data, dict):
         return jsonify({'error': 'Request body must be a JSON object'}), 400
 
+    # Frontend sends { config: {...} } — unwrap if present
+    config_data = data.get('config', data)
+    if not isinstance(config_data, dict):
+        return jsonify({'error': 'config must be a JSON object'}), 400
+
     # ── Per-channel validation ──────────────────────────────────────
-    error = _validate_channel_config(channel_name, data)
+    error = _validate_channel_config(channel_name, config_data)
     if error:
         return jsonify({'error': error}), 400
 
@@ -244,7 +249,7 @@ def update_channel_config(channel_name):
         config = ChannelConfig(user_id=user_id, channel=channel_name)
         db.session.add(config)
 
-    config.config_json = data
+    config.config_json = config_data
 
     # Channels that don't require verification are auto-verified
     if channel_name not in _VERIFIED_CHANNELS:
