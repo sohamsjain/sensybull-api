@@ -1,0 +1,13 @@
+Hi {{ user_name }},
+
+Click the link below to sign in to your {{ app_name }} account.
+No password needed.
+
+Sign in:
+{{ magic_link_url }}
+
+This link expires in {{ expires_minutes }} minute{{ 's' if expires_minutes != 1 else '' }} and can only be used once.
+If you didn't request this, you can safely ignore this email.
+
+-- {{ app_name }}
+Need help? {{ support_email }}

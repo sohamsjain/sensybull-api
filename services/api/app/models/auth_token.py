@@ -11,6 +11,7 @@ class AuthTokenPurpose:
     """String-enum-like constants for AuthToken.purpose."""
     EMAIL_VERIFY = 'email_verify'
     PASSWORD_RESET = 'password_reset'
+    MAGIC_LINK = 'magic_link'
 
 
 class AuthToken(BaseModel):
