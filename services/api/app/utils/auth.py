@@ -87,6 +87,32 @@ def verify_google_token(token):
         return None
 
 
+def exchange_google_code(code):
+    """Exchange a Google authorization code for verified user info."""
+    try:
+        resp = requests.post(
+            'https://oauth2.googleapis.com/token',
+            data={
+                'code': code,
+                'client_id': current_app.config['GOOGLE_CLIENT_ID'],
+                'client_secret': current_app.config['GOOGLE_CLIENT_SECRET'],
+                'redirect_uri': 'postmessage',
+                'grant_type': 'authorization_code',
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log.warning("Google code exchange HTTP %s: %s", resp.status_code, resp.text)
+            return None
+        id_token = resp.json().get('id_token')
+        if not id_token:
+            return None
+        return verify_google_token(id_token)
+    except Exception as e:
+        log.warning("Google code exchange failed: %s", e)
+        return None
+
+
 def verify_apple_token(token):
     try:
         unverified_header = pyjwt.get_unverified_header(token)
