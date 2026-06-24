@@ -61,6 +61,16 @@ class Config:
     VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY')
     VAPID_SUBJECT = os.environ.get('VAPID_SUBJECT')  # e.g. mailto:support@sensybull.com
 
+    # SMS & WhatsApp (Twilio)
+    TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+    TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+    TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
+    TWILIO_WHATSAPP_NUMBER = os.environ.get('TWILIO_WHATSAPP_NUMBER')
+
+    # Telegram
+    TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+    TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME')
+
     # Logging
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
 
