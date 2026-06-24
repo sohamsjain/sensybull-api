@@ -14,7 +14,7 @@ from app.services.email.sender import (
     send_magic_link, send_password_changed, send_password_reset,
     send_verification, send_welcome,
 )
-from app.utils.auth import verify_apple_token, verify_google_token
+from app.utils.auth import exchange_google_code, verify_apple_token, verify_google_token
 from app.utils.schemas import (
     ChangePasswordSchema, EmailOnlySchema, ResetPasswordSchema, TokenSchema,
     UserLoginSchema, UserRegistrationSchema, UserSchema,
@@ -134,13 +134,18 @@ def login():
 
 @auth_bp.route('/google', methods=['POST'])
 def google_login():
+    code = request.json.get('code')
     token = request.json.get('token')
-    if not token:
-        return jsonify({'error': 'Token required'}), 400
 
-    payload = verify_google_token(token)
+    if code:
+        payload = exchange_google_code(code)
+    elif token:
+        payload = verify_google_token(token)
+    else:
+        return jsonify({'error': 'Token or code required'}), 400
+
     if not payload:
-        return jsonify({'error': 'Invalid Google token'}), 401
+        return jsonify({'error': 'Invalid Google credentials'}), 401
 
     email = payload.get('email')
     name = payload.get('name', '')
