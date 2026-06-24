@@ -31,6 +31,7 @@ class Config:
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=999)
     GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
     GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
+    APPLE_CLIENT_ID = os.environ.get('APPLE_CLIENT_ID')
     # Application identity (used in email subjects/templates/links)
     APP_NAME = os.environ.get('APP_NAME') or 'Sensybull'
     FRONTEND_URL = os.environ.get('FRONTEND_URL') or 'http://localhost:3000'

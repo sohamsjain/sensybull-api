@@ -15,6 +15,7 @@ class User(BaseModel):
     phone_number: so.Mapped[Optional[str]] = so.mapped_column(sa.String(20), nullable=True, unique=True, index=True)
     password_hash: so.Mapped[Optional[str]] = so.mapped_column(sa.String(255), nullable=True)
     google_id: so.Mapped[Optional[str]] = so.mapped_column(sa.String(100), unique=True, index=True, nullable=True)
+    apple_id: so.Mapped[Optional[str]] = so.mapped_column(sa.String(100), unique=True, index=True, nullable=True)
     email_verified: so.Mapped[bool] = so.mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
     email_verified_at: so.Mapped[Optional[datetime]] = so.mapped_column(sa.DateTime(timezone=True), nullable=True)
 

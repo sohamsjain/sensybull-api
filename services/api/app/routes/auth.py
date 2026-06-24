@@ -14,7 +14,7 @@ from app.services.email.sender import (
     send_magic_link, send_password_changed, send_password_reset,
     send_verification, send_welcome,
 )
-from app.utils.auth import verify_google_token
+from app.utils.auth import verify_apple_token, verify_google_token
 from app.utils.schemas import (
     ChangePasswordSchema, EmailOnlySchema, ResetPasswordSchema, TokenSchema,
     UserLoginSchema, UserRegistrationSchema, UserSchema,
@@ -181,6 +181,69 @@ def google_login():
     refresh_token = create_refresh_token(identity=user.id)
     return jsonify({
         'message': 'Google login successful',
+        'user': user_schema.dump(user),
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+    })
+
+
+@auth_bp.route('/apple', methods=['POST'])
+def apple_login():
+    id_token = request.json.get('id_token')
+    if not id_token:
+        return jsonify({'error': 'id_token required'}), 400
+
+    payload = verify_apple_token(id_token)
+    if not payload:
+        return jsonify({'error': 'Invalid Apple token'}), 401
+
+    apple_id = payload.get('sub')
+    email = payload.get('email')
+    if not email:
+        return jsonify({'error': 'Email not provided by Apple'}), 400
+
+    # Apple only sends the name on the very first authorization.
+    user_data = request.json.get('user') or {}
+    first_name = user_data.get('firstName', '')
+    last_name = user_data.get('lastName', '')
+    name = f"{first_name} {last_name}".strip() or email.split('@')[0]
+
+    is_new_user = False
+    user = User.query.filter_by(apple_id=apple_id).first()
+    if not user:
+        user = User.query.filter_by(email=email).first()
+
+    if not user:
+        user = User(
+            name=name, email=email, apple_id=apple_id,
+            email_verified=True, email_verified_at=datetime.now(timezone.utc),
+        )
+        user.alert_preference = AlertPreference()
+        db.session.add(user)
+        is_new_user = True
+    else:
+        if not user.apple_id:
+            user.apple_id = apple_id
+        if not user.email_verified:
+            user.email_verified = True
+            user.email_verified_at = datetime.now(timezone.utc)
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to process Apple login'}), 500
+
+    if is_new_user:
+        try:
+            send_welcome(user)
+        except Exception:
+            current_app.logger.exception('Failed to send welcome email for user_id=%s', user.id)
+
+    access_token = create_access_token(identity=user.id)
+    refresh_token = create_refresh_token(identity=user.id)
+    return jsonify({
+        'message': 'Apple login successful',
         'user': user_schema.dump(user),
         'access_token': access_token,
         'refresh_token': refresh_token,
