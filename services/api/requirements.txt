@@ -27,3 +27,4 @@ python-json-logger>=2.0.0
 sentry-sdk[flask]>=2.0.0
 pywebpush>=2.0.0
 twilio>=9.0.0
+groq>=0.25.0

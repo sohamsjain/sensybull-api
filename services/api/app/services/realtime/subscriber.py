@@ -37,7 +37,6 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         from app.models.filing_event import FilingEvent
         from app.models.event_type import EventType
         from app.models.catalyst import Catalyst
-        from app.models.watchlist import Watchlist
 
         try:
             data = json.loads(raw_message)
@@ -134,40 +133,26 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             log.exception("Subscriber: DB commit failed for edgar_id=%s", edgar_id)
             return
 
-        payload = event.to_ws_payload()
+        # Hand off to the analysis worker, which enriches the event with
+        # second-order analysis + a thesis update and then fans it out (the
+        # "single combined message"). The DB's analysis_status='pending' is the
+        # durable record, so a dropped queue entry is recovered by the worker's
+        # startup sweep. When analysis is disabled, fan out immediately (legacy).
+        from app.services.analysis.queue import analysis_enabled, enqueue
 
-        # Fan-out: find every user who has this company in a watchlist
-        if company:
-            watchlists = Watchlist.query.filter(
-                Watchlist.companies.any(id=company.id)
-            ).all()
-            user_ids = {wl.user_id for wl in watchlists}
-        else:
-            # Company not in DB — no personalized delivery yet.
-            # Still emit to a public "unfiltered" room for direct-feed clients.
-            user_ids = set()
-
-        for uid in user_ids:
-            socketio.emit(
-                "filing_event",
-                payload,
-                room=f"user:{uid}",
-                namespace="/feed",
+        if analysis_enabled():
+            enqueue(event.id)
+            log.info(
+                "Subscriber: stored + queued edgar_id=%s ticker=%s tier=%d",
+                edgar_id, ticker or "—", max_tier,
             )
-            log.debug("Emitted filing_event to user:%s (tier=%d)", uid, max_tier)
-
-        # Also emit to the public room (for unauthenticated direct-feed clients
-        # and the existing client.html, keeping backward compat)
-        socketio.emit("filing_event", payload, room="public", namespace="/feed")
-
-        # Dispatch alert notifications (async — does not block the subscriber)
-        from app.services.alerts.dispatcher import trigger_alerts
-        trigger_alerts(app, event.id, user_ids)
-
-        log.info(
-            "Subscriber: stored + emitted edgar_id=%s ticker=%s tier=%d users=%d",
-            edgar_id, ticker or "—", max_tier, len(user_ids),
-        )
+        else:
+            from app.services.realtime.dispatch import fan_out
+            user_ids = fan_out(socketio, event.id)
+            log.info(
+                "Subscriber: stored + emitted (analysis off) edgar_id=%s ticker=%s tier=%d users=%d",
+                edgar_id, ticker or "—", max_tier, len(user_ids),
+            )
 
 
 def start_subscriber(app, socketio) -> threading.Thread:

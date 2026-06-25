@@ -31,7 +31,11 @@ def create_app(config_class=Config):
     allowed_origins = [o.strip() for o in origins_raw.split(',') if o.strip()]
     CORS(app, origins=allowed_origins)
     limiter.init_app(app)
-    socketio.init_app(app, cors_allowed_origins=allowed_origins)
+    # Bind SocketIO to the Redis message queue so the separate analysis worker
+    # process can emit `filing_event` to clients connected to this web server.
+    # Skipped under TESTING (no broker; single-process).
+    message_queue = os.environ.get("REDIS_URL") if not app.config.get("TESTING") else None
+    socketio.init_app(app, cors_allowed_origins=allowed_origins, message_queue=message_queue)
     app.url_map.strict_slashes = False
 
     # ── Request ID middleware ─────────────────────────────────────────
@@ -159,8 +163,11 @@ def create_app(config_class=Config):
     from app.services.company_loader import ensure_companies_loaded
     ensure_companies_loaded(app)
 
-    # Start Redis subscriber (skip when no Redis is configured, e.g. cron jobs)
-    if os.environ.get("REDIS_URL"):
+    # Start Redis subscriber (skip when no Redis is configured, e.g. cron jobs,
+    # or when RUN_SUBSCRIBER is disabled — the analysis worker process sets this
+    # so it doesn't double-consume the filing:new channel).
+    run_subscriber = os.environ.get("RUN_SUBSCRIBER", "true").lower() not in ("0", "false", "no")
+    if os.environ.get("REDIS_URL") and run_subscriber:
         from app.services.realtime.subscriber import start_subscriber
         start_subscriber(app, socketio)
 

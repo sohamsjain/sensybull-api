@@ -4,6 +4,8 @@ from marshmallow import ValidationError
 import sqlalchemy as sa
 from app import db
 from app.models.company import Company
+from app.models.thesis_revision import ThesisRevision
+from app.services.analysis.engine import get_current_thesis
 from app.utils.schemas import CompanySchema, CompanyCreateSchema
 
 companies_bp = Blueprint('companies', __name__)
@@ -80,6 +82,35 @@ def get_companies():
 def get_company(company_id):
     company = Company.query.get_or_404(company_id)
     return jsonify({'company': company_schema.dump(company)})
+
+
+@companies_bp.route('/<company_id>/thesis', methods=['GET'])
+@jwt_required()
+def get_company_thesis(company_id):
+    """Return the company's current investment thesis plus its revision timeline.
+
+    The thesis is append-only: ``current`` is the latest revision (the full
+    self-contained story), and ``revisions`` is the chronological arc showing how
+    the story evolved as material filings hit.
+    """
+    company = Company.query.get_or_404(company_id)
+    limit = min(max(request.args.get('limit', 50, type=int), 1), 200)
+
+    current = get_current_thesis(company.id)
+    revisions = (
+        ThesisRevision.query
+        .filter_by(company_id=company.id)
+        .order_by(ThesisRevision.version.desc())
+        .limit(limit)
+        .all()
+    )
+    return jsonify({
+        'company_id': company.id,
+        'ticker': company.ticker,
+        'name': company.name,
+        'current': current.to_dict() if current else None,
+        'revisions': [r.to_dict() for r in revisions],
+    })
 
 
 @companies_bp.route('/', methods=['POST'])

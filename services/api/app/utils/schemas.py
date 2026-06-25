@@ -154,4 +154,10 @@ class FilingEventSchema(Schema):
     briefing         = fields.Raw(dump_only=True)
     event_types      = fields.List(fields.Str(), attribute="event_types_json", dump_only=True)
     event_type_details = fields.List(fields.Nested(EventTypeSchema), attribute="event_types", dump_only=True)
+    analysis_status  = fields.Str(dump_only=True)
+    analysis         = fields.Method("get_analysis", dump_only=True)
     received_at      = fields.DateTime(attribute="created_at", dump_only=True)
+
+    def get_analysis(self, obj):
+        analysis = getattr(obj, "analysis", None)
+        return analysis.to_dict() if analysis else None

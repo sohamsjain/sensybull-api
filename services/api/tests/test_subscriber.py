@@ -107,7 +107,26 @@ class TestHandleEvent:
         event = FilingEvent.query.filter_by(edgar_id="new-company-001").first()
         assert event.company_id == company.id
 
-    def test_emits_to_public_room(self, app, db_session, sample_company):
+    def test_enqueues_for_analysis_when_enabled(self, app, db_session, sample_company, monkeypatch):
+        """With analysis enabled (default), the subscriber persists + enqueues and
+        does NOT emit directly — the worker fans out after enrichment."""
+        monkeypatch.setenv("ANALYSIS_ENABLED", "true")
+        enqueued = []
+        monkeypatch.setattr(
+            "app.services.analysis.queue.enqueue", lambda eid: enqueued.append(eid))
+
+        sio = FakeSocketIO()
+        _handle_event(app, sio, _make_filing_json())
+
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-001").first()
+        assert event is not None
+        assert event.analysis_status == "pending"
+        assert enqueued == [event.id]
+        assert sio.emitted == []  # no direct fan-out on the real-time path
+
+    def test_emits_to_public_room(self, app, db_session, sample_company, monkeypatch):
+        # Legacy/kill-switch path: analysis disabled → subscriber fans out itself.
+        monkeypatch.setenv("ANALYSIS_ENABLED", "false")
         sio = FakeSocketIO()
         _handle_event(app, sio, _make_filing_json())
 
@@ -116,8 +135,9 @@ class TestHandleEvent:
         assert public_emits[0]["event"] == "filing_event"
 
     def test_emits_to_watchlist_users(
-        self, app, db_session, sample_watchlist, sample_company
+        self, app, db_session, sample_watchlist, sample_company, monkeypatch
     ):
+        monkeypatch.setenv("ANALYSIS_ENABLED", "false")
         sio = FakeSocketIO()
         _handle_event(app, sio, _make_filing_json())
 

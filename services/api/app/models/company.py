@@ -15,6 +15,12 @@ class Company(BaseModel):
     state_of_incorporation: so.Mapped[Optional[str]] = so.mapped_column(sa.String(100), nullable=True)
     # Legacy column; frontend now uses Logo.dev URLs derived from ticker
     logo_url: so.Mapped[Optional[str]] = so.mapped_column(sa.Text, nullable=True)
+    # Pointer to the latest ThesisRevision (the current thesis) for cheap reads.
+    # Plain id, not a DB-level FK, to avoid a circular company<->thesis_revision
+    # constraint; the worker keeps it in sync and reads fall back to the
+    # highest-version revision.
+    current_thesis_revision_id: so.Mapped[Optional[str]] = so.mapped_column(
+        sa.String(36), nullable=True)
 
     filings: so.Mapped[List["Filing"]] = so.relationship(back_populates='company', cascade='all, delete-orphan')
     watchlists: so.Mapped[List["Watchlist"]] = so.relationship(

@@ -45,6 +45,13 @@ class FilingEvent(BaseModel):
     # Signal priority
     max_tier: so.Mapped[int] = so.mapped_column(sa.Integer, nullable=False, default=3, index=True)
 
+    # Second-order analysis lifecycle: "pending" (awaiting enrichment by the
+    # analysis worker), "done" (analysis attached), or "failed" (fanned out on
+    # the instant briefing alone after a fundamentals/LLM error or timeout).
+    analysis_status: so.Mapped[str] = so.mapped_column(
+        sa.String(16), nullable=False, default="pending", index=True,
+    )
+
     # Full parsed payload (stored as JSON for schema flexibility)
     # Shape: list of {number, title, tier, category, text}
     items_json: so.Mapped[Optional[dict]] = so.mapped_column(sa.JSON, nullable=True)
@@ -67,6 +74,10 @@ class FilingEvent(BaseModel):
     catalysts: so.Mapped[list["Catalyst"]] = so.relationship(  # noqa: F821
         "Catalyst", back_populates="filing_event",
         cascade="all, delete-orphan", lazy="selectin",
+    )
+    analysis: so.Mapped[Optional["EventAnalysis"]] = so.relationship(  # noqa: F821
+        "EventAnalysis", back_populates="filing_event",
+        uselist=False, cascade="all, delete-orphan", lazy="selectin",
     )
 
     __table_args__ = (
@@ -110,6 +121,8 @@ class FilingEvent(BaseModel):
                 {"event": c.event_description, "date": c.catalyst_date.isoformat() if c.catalyst_date else None}
                 for c in self.catalysts
             ] if self.catalysts else [],
+            "analysis_status": self.analysis_status,
+            "analysis": self.analysis.to_dict() if self.analysis else None,
             "received_at": self._utc_iso(self.created_at),
         }
 
