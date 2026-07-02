@@ -88,6 +88,16 @@ def get_all_events():
     })
 
 
+@events_bp.route("/all/<event_id>", methods=["GET"])
+def get_public_event(event_id):
+    """Single event by id, no auth — filings are public data.
+
+    Backs the frontend's shareable per-event permalinks.
+    """
+    event = FilingEvent.query.get_or_404(event_id)
+    return jsonify({"event": event.to_ws_payload()})
+
+
 EVENT_TYPES = [
     "M&A / Merger", "Acquisition", "Divestiture", "Activist Proxy",
     "Activist Initial", "Strategic Review", "Tender Offer", "Issuer Tender",
