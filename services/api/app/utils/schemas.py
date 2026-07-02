@@ -7,6 +7,7 @@ class UserSchema(Schema):
     email = fields.Email(required=True)
     phone_number = fields.Str(validate=validate.Length(max=20))
     is_admin = fields.Bool(dump_only=True)
+    picture_url = fields.Str(dump_only=True, allow_none=True)
     email_verified = fields.Bool(dump_only=True)
     email_verified_at = fields.DateTime(dump_only=True)
     created_at = fields.DateTime(dump_only=True)
