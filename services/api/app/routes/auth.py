@@ -150,6 +150,7 @@ def google_login():
     email = payload.get('email')
     name = payload.get('name', '')
     google_id = payload.get('sub')
+    picture_url = payload.get('picture')
 
     is_new_user = False
     user = User.query.filter_by(email=email).first()
@@ -157,6 +158,7 @@ def google_login():
         # Google has already verified the address for us.
         user = User(
             name=name, email=email, google_id=google_id,
+            picture_url=picture_url,
             email_verified=True, email_verified_at=datetime.now(timezone.utc),
         )
         user.alert_preference = AlertPreference()
@@ -165,6 +167,9 @@ def google_login():
     else:
         if not user.google_id:
             user.google_id = google_id
+        # Google photo URLs rotate; keep the stored one current.
+        if picture_url and user.picture_url != picture_url:
+            user.picture_url = picture_url
         # Trust Google's assertion to auto-verify a previously unverified account.
         if not user.email_verified:
             user.email_verified = True
