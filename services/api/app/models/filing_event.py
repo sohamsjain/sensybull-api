@@ -68,6 +68,10 @@ class FilingEvent(BaseModel):
         "Catalyst", back_populates="filing_event",
         cascade="all, delete-orphan", lazy="selectin",
     )
+    price_reactions: so.Mapped[list["PriceReaction"]] = so.relationship(  # noqa: F821
+        "PriceReaction", back_populates="filing_event",
+        cascade="all, delete-orphan", lazy="selectin",
+    )
 
     __table_args__ = (
         sa.Index("ix_filing_event_ticker_date", "ticker", "filing_date"),
@@ -111,7 +115,24 @@ class FilingEvent(BaseModel):
                 for c in self.catalysts
             ] if self.catalysts else [],
             "received_at": self._utc_iso(self.created_at),
+            "market_cap": self.company.market_cap if self.company else None,
+            "price_reactions": {
+                r.interval: {
+                    "pct": r.pct_change,
+                    "price": float(r.measured_price) if r.measured_price is not None else None,
+                    "measured_at": self._utc_iso(r.measured_at),
+                    "explosive": r.is_explosive,
+                }
+                for r in self.price_reactions if r.status == "done"
+            },
+            "explosive": any(r.is_explosive for r in self.price_reactions),
         }
 
     def __repr__(self):
         return f"<FilingEvent ticker={self.ticker} tier={self.max_tier} id={self.id}>"
+
+
+# The app imports models individually (not the app.models package), so pull
+# in PriceReaction here — the string-named relationship above can't resolve
+# unless the class is registered with the mapper.
+from app.models.price_reaction import PriceReaction  # noqa: E402, F401

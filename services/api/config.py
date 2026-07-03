@@ -72,6 +72,14 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
     TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME')
 
+    # Market data (Alpaca). Modules under app/services/market_data read these
+    # from os.environ directly (same convention as SEC_USER_AGENT); listed
+    # here for documentation and .env completeness.
+    ALPACA_API_KEY_ID = os.environ.get('ALPACA_API_KEY_ID')
+    ALPACA_API_SECRET_KEY = os.environ.get('ALPACA_API_SECRET_KEY')
+    ALPACA_DATA_BASE_URL = os.environ.get('ALPACA_DATA_BASE_URL') or 'https://data.alpaca.markets'
+    ALPACA_FEED = os.environ.get('ALPACA_FEED') or 'iex'  # "sip" on paid plans
+
     # Logging
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
 

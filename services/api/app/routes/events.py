@@ -9,6 +9,7 @@ GET  /events/company/<company_id>   events for one company (with optional tier f
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from sqlalchemy.orm import joinedload
 
 from app.models.filing_event import FilingEvent
 from app.models.event_type import EventType
@@ -45,6 +46,7 @@ def get_events():
 
     q = (
         FilingEvent.query
+        .options(joinedload(FilingEvent.company))
         .filter(FilingEvent.company_id.in_(company_ids))
         .filter(FilingEvent.max_tier <= max_tier)
     )
@@ -72,7 +74,11 @@ def get_all_events():
     signal_type = request.args.get("signal_type")
     event_type  = request.args.get("event_type")
 
-    q = FilingEvent.query.filter(FilingEvent.max_tier <= max_tier)
+    q = (
+        FilingEvent.query
+        .options(joinedload(FilingEvent.company))
+        .filter(FilingEvent.max_tier <= max_tier)
+    )
     if signal_type:
         q = q.filter(FilingEvent.signal_type == signal_type)
     q = _apply_event_type_filter(q, event_type)
@@ -174,6 +180,7 @@ def get_company_events(company_id):
 
     q = (
         FilingEvent.query
+        .options(joinedload(FilingEvent.company))
         .filter_by(company_id=company_id)
         .filter(FilingEvent.max_tier <= max_tier)
     )

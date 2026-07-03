@@ -51,6 +51,9 @@ class CompanySchema(Schema):
     sic = fields.Str(validate=validate.Length(max=10))
     state_of_incorporation = fields.Str(validate=validate.Length(max=100))
     logo_url = fields.Str(dump_only=True, allow_none=True)
+    market_cap = fields.Int(dump_only=True, allow_none=True)
+    last_price = fields.Float(dump_only=True, allow_none=True)
+    shares_outstanding = fields.Int(dump_only=True, allow_none=True)
     created_at = fields.DateTime(dump_only=True)
     filings = fields.List(fields.Nested('FilingSchema', exclude=('company',)), dump_only=True)
 

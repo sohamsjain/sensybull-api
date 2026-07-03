@@ -38,7 +38,8 @@ class TestConfig(Config):
 def app():
     """Create the Flask app once per test session."""
     with patch("app.services.company_loader.ensure_companies_loaded"), \
-         patch("app.services.realtime.subscriber.start_subscriber"):
+         patch("app.services.realtime.subscriber.start_subscriber"), \
+         patch("app.services.market_data.reaction_worker.start_reaction_worker"):
         application = create_app(config_class=TestConfig)
     yield application
 
