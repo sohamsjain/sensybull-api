@@ -104,6 +104,7 @@ def get_public_event(event_id):
     return jsonify({"event": event.to_ws_payload()})
 
 
+# Mirrors services/ingest/briefing.py EVENT_TYPES — keep the two in sync.
 EVENT_TYPES = [
     "M&A / Merger", "Acquisition", "Divestiture", "Activist Proxy",
     "Activist Initial", "Strategic Review", "Tender Offer", "Issuer Tender",
@@ -112,7 +113,8 @@ EVENT_TYPES = [
     "Litigation", "Domicile Change", "Earnings", "Leadership Change",
     "Debt / Financing", "Impairment", "Restatement", "Regulatory Action",
     "Cybersecurity Incident", "Material Agreement", "Dividend Change",
-    "Bankruptcy", "Shelf Registration", "Share Offering", "Stock Split", "Other",
+    "Bankruptcy", "Shelf Registration", "Share Offering", "Stock Split",
+    "Insider Buying", "Late Filing", "Other",
 ]
 
 

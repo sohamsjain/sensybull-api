@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Latest Filings</title>
+  <entry>
+    <title>8-K - Apple Inc. (0000320193) (Filer)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/320193/000032019326000010/0000320193-26-000010-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="8-K"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000320193-26-000010</id>
+    <updated>2026-07-03T16:05:00-04:00</updated>
+  </entry>
+  <entry>
+    <title>SC 13D - SmallCap Industries Inc. (0000012345) (Subject)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/12345/000090001126000123/0000900011-26-000123-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="SC 13D"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000900011-26-000123&amp;cik=12345</id>
+    <updated>2026-07-03T15:30:00-04:00</updated>
+  </entry>
+  <entry>
+    <title>SC 13D - Activist Capital LP (0000900011) (Filed by)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/900011/000090001126000123/0000900011-26-000123-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="SC 13D"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000900011-26-000123&amp;cik=900011</id>
+    <updated>2026-07-03T15:30:00-04:00</updated>
+  </entry>
+  <entry>
+    <title>SC 13G/A - Vanguard Group Inc (0000102909) (Filed by)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/102909/000010290926000200/0000102909-26-000200-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="SC 13G/A"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000102909-26-000200</id>
+    <updated>2026-07-03T15:00:00-04:00</updated>
+  </entry>
+  <entry>
+    <title>425 - MegaCorp Inc. (0000555555) (Filer)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/555555/000055555526000009/0000555555-26-000009-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="425"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000555555-26-000009</id>
+    <updated>2026-07-03T14:45:00-04:00</updated>
+  </entry>
+  <entry>
+    <title>S-4/A - MegaCorp Inc. (0000555555) (Filer)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/555555/000055555526000008/0000555555-26-000008-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="S-4/A"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000555555-26-000008</id>
+    <updated>2026-07-03T14:30:00-04:00</updated>
+  </entry>
+  <entry>
+    <title>NT 10-K - Troubled Corp (0000777777) (Filer)</title>
+    <link rel="alternate" type="text/html" href="https://www.sec.gov/Archives/edgar/data/777777/000077777726000005/0000777777-26-000005-index.htm"/>
+    <category scheme="https://www.sec.gov/form-types" label="form type" term="NT 10-K"/>
+    <id>urn:tag:sec.gov,2008:accession-number=0000777777-26-000005</id>
+    <updated>2026-07-03T14:00:00-04:00</updated>
+  </entry>
+</feed>

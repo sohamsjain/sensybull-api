@@ -140,3 +140,75 @@ class TestHandleEvent:
         assert event is not None
         assert event.briefing_json is None
         assert len(event.catalysts) == 0
+
+
+class TestNonEightKForms:
+    """Multi-form ingest: events like SC 13D arrive with no items and a
+    form-level max_tier that must pass through without recomputation."""
+
+    def test_sc13d_persists_with_form_tier(self, app, db_session, sample_company):
+        sio = FakeSocketIO()
+        payload = _make_filing_json(
+            edgar_id="test-sub-13d",
+            signal_type="SC 13D",
+            max_tier=1,
+            items=[],
+            event_types=["Activist Initial"],
+            briefing={
+                "headline": "Activist takes 8.2% stake",
+                "summary": "An activist crossed 5%.",
+                "primary_event_type": "Activist Initial",
+                "significance": "High",
+                "sentiment": "Positive",
+                "investor_takeaway": "Watch for a 13D/A.",
+                "catalysts": [],
+                "deal_terms": {},
+            },
+        )
+        _handle_event(app, sio, payload)
+
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-13d").first()
+        assert event is not None
+        assert event.signal_type == "SC 13D"
+        # Empty items must NOT downgrade the form-level tier to 3
+        assert event.max_tier == 1
+        assert event.items_json == []
+        assert event.company_id == sample_company.id
+
+    def test_sc13d_schedules_price_reactions(self, app, db_session, sample_company):
+        from app.models.price_reaction import PriceReaction
+
+        _handle_event(app, FakeSocketIO(), _make_filing_json(
+            edgar_id="test-sub-13d-pr",
+            signal_type="SC 13D",
+            max_tier=1,
+            items=[],
+        ))
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-13d-pr").first()
+        rows = PriceReaction.query.filter_by(filing_event_id=event.id).all()
+        assert len(rows) == 6
+
+    def test_form4_insider_buy_event(self, app, db_session, sample_company):
+        sio = FakeSocketIO()
+        _handle_event(app, sio, _make_filing_json(
+            edgar_id="test-sub-form4",
+            signal_type="4",
+            max_tier=2,
+            items=[],
+            event_types=["Insider Buying"],
+            briefing={
+                "headline": "CFO Doe Jane buys $160k at $3.21",
+                "summary": "Open-market purchase.",
+                "primary_event_type": "Insider Buying",
+                "significance": "Medium",
+                "sentiment": "Positive",
+                "investor_takeaway": "Insiders buy for one reason.",
+                "catalysts": [],
+                "deal_terms": {"deal_value": "$160k"},
+            },
+        ))
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-form4").first()
+        assert event.signal_type == "4"
+        assert event.max_tier == 2
+        emitted = [e for e in sio.emitted if e["event"] == "filing_event"]
+        assert emitted, "filing_event should be emitted for Form 4 events"
