@@ -13,6 +13,7 @@ import threading
 
 from groq import Groq
 
+from forms import FormSpec, get_spec
 from models import Briefing, Filing
 from parser import strip_html
 
@@ -41,6 +42,7 @@ def _next_api_key() -> str:
 
 _ITEM_TEXT_CAP = 6_000
 _EXHIBIT_TEXT_CAP = 8_000
+_DOCUMENT_TEXT_CAP = 12_000
 _TOTAL_TEXT_CAP = 24_000
 
 # Model fallback chain: try the best model first, fall back on rate-limit errors.
@@ -85,25 +87,29 @@ EVENT_TYPES = [
     "Shelf Registration",
     "Share Offering",
     "Stock Split",
+    "Insider Buying",
+    "Late Filing",
     "Other",
 ]
+# NOTE: this list is mirrored in services/api/app/routes/events.py — keep in sync.
 
 _EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
 
-_SYSTEM_PROMPT = f"""\
-You are a buyside special-situations analyst reading SEC 8-K filings.
+_SYSTEM_PROMPT_TEMPLATE = f"""\
+You are a buyside special-situations analyst reading SEC filings.
 Your job is to interpret filings the way an event-driven investor would —
 identify the deal, the parties, the economics, and the status.
 
-Given an 8-K filing, produce a JSON object with these fields:
+Given a {{form_name}} filing{{category_note}}, produce a JSON object with these fields:
 
 1. "headline" — a short, punchy headline (max 100 chars). Use semicolons to
    separate key facts. Focus on WHAT is happening, not who filed.
    Good: "SPAC merger with FGMC; forward purchase agreement for up to 3M shares"
    Bad:  "FG Merger II Corp. enters into Forward Purchase Agreement with Atsion"
 
-2. "summary" — a 2-4 sentence paragraph written from the TARGET COMPANY's
-   perspective. Tell the investor story: what deal is happening, who the
+2. "summary" — a 2-4 sentence paragraph written from the SUBJECT COMPANY's
+   perspective (the company whose stock is affected, which is not always the
+   filer). Tell the investor story: what deal is happening, who the
    counterparties are, key economics (dollar amounts, share counts, prices),
    and the current procedural status (vote pending, effective date, etc.).
    Write flowing prose, not bullet points.
@@ -145,8 +151,28 @@ Given an 8-K filing, produce a JSON object with these fields:
    Each entry: {{"date": "YYYY-MM-DD" or null, "event": "description"}}.
    Include: vote dates, tender deadlines, expected close dates, effective dates,
    record dates. Omit this field entirely if no catalysts are mentioned.
-
+{{form_guidance}}
 Respond ONLY with valid JSON. No markdown, no commentary."""
+
+
+def _system_prompt(spec: FormSpec | None) -> str:
+    """Render the system prompt for a form type (None → historical 8-K).
+
+    Placeholders are substituted with str.replace, not str.format — the
+    template contains literal JSON braces (the catalysts example) that
+    format() would choke on.
+    """
+    form_name = spec.form if spec else "8-K"
+    category_note = f" ({spec.category})" if spec and spec.category else ""
+    guidance = ""
+    if spec and spec.llm_hint:
+        guidance = f"\nFORM-SPECIFIC GUIDANCE ({form_name}):\n{spec.llm_hint}\n"
+    return (
+        _SYSTEM_PROMPT_TEMPLATE
+        .replace("{form_name}", form_name)
+        .replace("{category_note}", category_note)
+        .replace("{form_guidance}", guidance)
+    )
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -160,6 +186,10 @@ def _build_user_message(filing: Filing, exhibit_texts: dict[str, str]) -> str:
     parts.append(f"Company: {filing.title}")
     if filing.ticker:
         parts.append(f"Ticker: {filing.ticker}")
+    if filing.form_type and filing.form_type != "8-K":
+        parts.append(f"Form: {filing.form_type}")
+    if filing.filed_by:
+        parts.append(f"Filed by: {filing.filed_by}")
     parts.append(f"Filed: {filing.updated}")
     parts.append("")
 
@@ -167,6 +197,12 @@ def _build_user_message(filing: Filing, exhibit_texts: dict[str, str]) -> str:
     for item in filing.items:
         parts.append(f"--- Item {item.number}: {item.title} ({item.category}) ---")
         parts.append(_truncate(item.text, _ITEM_TEXT_CAP))
+        parts.append("")
+
+    # Document excerpt (forms without item structure: proxies, tenders, NT…)
+    if filing.document_excerpt:
+        parts.append(f"--- Filing Document ({filing.form_type}) ---")
+        parts.append(_truncate(filing.document_excerpt, _DOCUMENT_TEXT_CAP))
         parts.append("")
 
     # Exhibit text
@@ -203,14 +239,18 @@ def _is_rate_limit(exc: Exception) -> bool:
 
 def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing:
     """Generate a Briefing from filing data + exhibit HTML. Returns fallback on failure."""
+    spec = get_spec(filing.form_type)
+    # LLM failure still needs a filterable classification — a 13D whose
+    # briefing call fails must still land as "Activist Initial", not "Other"
+    fallback_type = spec.default_event_type if spec else "Other"
     fallback = Briefing(
-        headline=filing.title, summary="", primary_event_type="Other",
+        headline=filing.title, summary="", primary_event_type=fallback_type,
         deal_terms={}, significance="Medium", sentiment="Neutral",
-        investor_takeaway="", catalysts=[], event_types=["Other"],
+        investor_takeaway="", catalysts=[], event_types=[fallback_type],
     )
     user_msg = _build_user_message(filing, exhibit_texts)
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": _system_prompt(spec)},
         {"role": "user", "content": user_msg},
     ]
 

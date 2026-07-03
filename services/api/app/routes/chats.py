@@ -39,12 +39,32 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
+# Human-readable fallback labels for non-8-K form types
+_FORM_LABELS = {
+    '8-K': 'an 8-K',
+    '4': 'a Form 4 insider transaction',
+    'SC 13D': 'a 13D stake disclosure',
+    'SC 13D/A': 'a 13D amendment',
+    'SC 13G': 'a 13G passive stake',
+    'SC TO-T': 'a tender offer',
+    'SC TO-I': 'a self-tender',
+    'SC 14D9': 'a tender-offer response',
+    'SC 13E3': 'a going-private filing',
+    'NT 10-K': 'a late-filing notice',
+    'NT 10-Q': 'a late-filing notice',
+}
+
+
+def _form_label(signal_type: str) -> str:
+    return _FORM_LABELS.get(signal_type, f'a {signal_type}')
+
+
 def _event_preview(event: FilingEvent) -> dict:
     """Compact 'last message' payload for the chat list."""
     briefing = event.briefing_json or {}
     return {
         'id': event.id,
-        'headline': briefing.get('headline') or f'{event.company_name} filed an {event.signal_type}',
+        'headline': briefing.get('headline') or f'{event.company_name} filed {_form_label(event.signal_type)}',
         'significance': briefing.get('significance'),
         'sentiment': briefing.get('sentiment'),
         'primary_event_type': briefing.get('primary_event_type'),

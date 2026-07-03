@@ -43,7 +43,7 @@ class FilingEvent:
     """Top-level event published to Redis channel `filing:new`."""
     # Ingest-side identifiers
     edgar_id: str            # EDGAR Atom entry ID — global dedup key
-    signal_type: str         # "8-K" today; "earnings" / "insider" later
+    signal_type: str         # EDGAR form type: "8-K", "SC 13D", "SC TO-T", "4", ...
 
     # Company identity
     cik: str
@@ -63,6 +63,10 @@ class FilingEvent:
 
     # LLM-classified event types (e.g. ["Acquisition", "Debt / Financing"])
     event_types: list[str] = field(default_factory=list)
+
+    # Filer name when it differs from the subject company (13D reporting
+    # person, tender bidder, proxy dissident). Empty for self-filed forms.
+    filed_by: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)

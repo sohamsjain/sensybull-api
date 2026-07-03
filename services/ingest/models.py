@@ -33,7 +33,7 @@ class Briefing:
 @dataclass
 class Filing:
     id: str           # EDGAR entry ID — dedup key
-    title: str        # company name
+    title: str        # company name (the SUBJECT company for ownership forms)
     cik: str
     ticker: str
     updated: str      # ISO 8601 timestamp
@@ -41,3 +41,6 @@ class Filing:
     items: list[Item] = field(default_factory=list)
     exhibits: list[Exhibit] = field(default_factory=list)
     briefing: Briefing | None = None
+    form_type: str = "8-K"
+    document_excerpt: str = ""   # bounded body text for forms without items
+    filed_by: str = ""           # filer name when it differs from the subject
