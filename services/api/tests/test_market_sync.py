@@ -42,23 +42,32 @@ class TestRecentQuarters:
 
 
 class TestFramesParsing:
-    def test_keys_by_padded_cik_first_hit_wins(self, monkeypatch):
-        frames = [
-            {"data": [{"cik": 320193, "val": 15000000000, "end": "2026-03-31"}]},
-            {"data": [
-                {"cik": 320193, "val": 14000000000, "end": "2025-12-31"},
-                {"cik": 1318605, "val": 3200000000, "end": "2025-12-31"},
-            ]},
-            {"data": []},
-        ]
+    def test_merges_concepts_and_keeps_freshest_as_of(self, monkeypatch):
+        """Both frame concepts are harvested across FRAME_QUARTERS quarters;
+        the freshest as_of per CIK wins regardless of source order."""
+        def fake_get_json(url, ua):
+            if "dei/EntityCommonSharesOutstanding" in url and "CY2026Q2I" in url:
+                return {"data": [
+                    {"cik": 320193, "val": 15000000000, "end": "2026-04-18"},
+                ]}
+            if "us-gaap/CommonStockSharesOutstanding" in url and "CY2026Q1I" in url:
+                return {"data": [
+                    # Older AAPL value must NOT overwrite the fresher dei one
+                    {"cik": 320193, "val": 14000000000, "end": "2026-01-31"},
+                    # TSLA only appears in the us-gaap frames
+                    {"cik": 1318605, "val": 3200000000, "end": "2026-03-31"},
+                ]}
+            return None  # everything else 404s
+
         monkeypatch.setenv("SEC_USER_AGENT", "test test@example.com")
         monkeypatch.setattr(edgar_facts, "FALLBACK_DELAY", 0)
-        with patch.object(edgar_facts, "_get_json", side_effect=frames):
+        with patch.object(edgar_facts, "_get_json", side_effect=fake_get_json) as gj:
             result = edgar_facts.fetch_shares_by_cik()
 
-        # Most recent quarter wins for AAPL; TSLA from the older frame
-        assert result["0000320193"] == (15000000000, date(2026, 3, 31))
-        assert result["0001318605"] == (3200000000, date(2025, 12, 31))
+        assert result["0000320193"] == (15000000000, date(2026, 4, 18))
+        assert result["0001318605"] == (3200000000, date(2026, 3, 31))
+        # 2 concepts × FRAME_QUARTERS quarters queried
+        assert gj.call_count == 2 * edgar_facts.FRAME_QUARTERS
 
 
 class TestSyncMarketData:
@@ -92,6 +101,33 @@ class TestSyncMarketData:
             _, prices_updated = sync_market_data()
         assert prices_updated == 0
         assert sample_company.last_price is None
+
+    def test_fallback_targets_priced_companies_missing_shares(
+        self, db_session, sample_company, sample_company_2,
+    ):
+        """The companyfacts backfill must cover tradable (priced) companies
+        the frames missed — the set the market-cap filter needs."""
+        sample_company.last_price = 50  # priced but no shares
+        db_session.session.commit()
+
+        with patch.object(edgar_facts, "fetch_shares_by_cik", return_value={}), \
+             patch.object(edgar_facts, "fetch_company_shares",
+                          return_value=(2000, date(2026, 6, 30))) as fcs, \
+             patch.object(edgar_facts, "FALLBACK_DELAY", 0), \
+             patch("app.services.market_data.sync.alpaca.get_snapshots",
+                   return_value={"AAPL": {"latestTrade": {"p": 50.0}},
+                                 "TSLA": {}}):
+            shares_updated, _ = sync_market_data()
+
+        # AAPL: priced → backfilled; TSLA: no price, not watchlisted → skipped
+        assert shares_updated == 1
+        called_ciks = {c.args[0] for c in fcs.call_args_list}
+        assert sample_company.cik in called_ciks
+        assert sample_company_2.cik not in called_ciks
+        db_session.session.refresh(sample_company)
+        assert sample_company.shares_outstanding == 2000
+        # Final pass computed the cap from the backfilled shares
+        assert sample_company.market_cap == 2000 * 50
 
 
 class TestCompanyPayloads:

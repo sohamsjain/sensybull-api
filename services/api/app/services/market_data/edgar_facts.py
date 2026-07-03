@@ -19,10 +19,20 @@ import requests
 log = logging.getLogger(__name__)
 
 FRAMES_URL = (
-    "https://data.sec.gov/api/xbrl/frames/dei/"
-    "EntityCommonSharesOutstanding/shares/CY{year}Q{quarter}I.json"
+    "https://data.sec.gov/api/xbrl/frames/"
+    "{taxonomy}/{concept}/shares/CY{year}Q{quarter}I.json"
 )
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+
+# Frames coverage for share counts is structurally sparse (cover-date
+# instants don't align to quarter ends; multi-class facts carry dimensions
+# and are excluded), so harvest both concepts across several quarters and
+# treat per-company companyfacts as the authoritative backfill.
+FRAME_CONCEPTS = [
+    ("dei", "EntityCommonSharesOutstanding"),
+    ("us-gaap", "CommonStockSharesOutstanding"),
+]
+FRAME_QUARTERS = 5
 
 # Delay between per-company companyfacts calls (~8 req/s, SEC allows 10)
 FALLBACK_DELAY = 0.125
@@ -69,30 +79,37 @@ def _recent_quarters(today: date | None = None, count: int = 3) -> list[tuple[in
 def fetch_shares_by_cik() -> dict[str, tuple[int, date]]:
     """Bulk shares outstanding: {zero-padded CIK: (shares, as_of_date)}.
 
-    Queries the current + 2 prior quarterly frames; the most recent frame
-    that reports a CIK wins (recently-ended quarters are sparsely populated
-    until filers catch up, hence the lookback).
+    Harvests both share-count concepts across the last FRAME_QUARTERS
+    quarterly frames and keeps the freshest as_of per CIK. Frames are a
+    best-effort bulk source only — per-company companyfacts (the fallback
+    in sync.py) fills whatever this misses.
     """
     ua = _user_agent()
     if not ua:
         return {}
 
     result: dict[str, tuple[int, date]] = {}
-    for year, quarter in _recent_quarters():
-        data = _get_json(FRAMES_URL.format(year=year, quarter=quarter), ua)
-        if not data:
-            continue
-        for entry in data.get("data") or []:
-            cik = str(entry.get("cik", "")).zfill(10)
-            val = entry.get("val")
-            if not val or cik in result:
+    for taxonomy, concept in FRAME_CONCEPTS:
+        for year, quarter in _recent_quarters(count=FRAME_QUARTERS):
+            url = FRAMES_URL.format(
+                taxonomy=taxonomy, concept=concept, year=year, quarter=quarter,
+            )
+            data = _get_json(url, ua)
+            if not data:
                 continue
-            try:
-                as_of = datetime.strptime(entry.get("end", ""), "%Y-%m-%d").date()
-            except (ValueError, TypeError):
-                as_of = None
-            result[cik] = (int(val), as_of)
-        time.sleep(FALLBACK_DELAY)
+            for entry in data.get("data") or []:
+                cik = str(entry.get("cik", "")).zfill(10)
+                val = entry.get("val")
+                if not val:
+                    continue
+                try:
+                    as_of = datetime.strptime(entry.get("end", ""), "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    continue
+                current = result.get(cik)
+                if current is None or (current[1] is not None and as_of > current[1]):
+                    result[cik] = (int(val), as_of)
+            time.sleep(FALLBACK_DELAY)
     log.info("EDGAR frames: shares outstanding for %d CIKs", len(result))
     return result
 
