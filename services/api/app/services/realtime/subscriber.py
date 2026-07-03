@@ -72,6 +72,16 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             db.session.flush()
             log.info("Subscriber: auto-created company ticker=%s cik=%s", ticker, cik)
 
+        # Late-lifecycle filings (Form 15/25 after a delisting closes) arrive
+        # without a ticker because SEC's ticker file drops deregistered
+        # companies. Our company table never deletes tickers, so the CIK
+        # match still knows it — backfill so the event keeps its ticker,
+        # logo, price reactions, and movers eligibility.
+        if not ticker and company is not None and company.ticker:
+            ticker = company.ticker
+            log.info("Subscriber: backfilled ticker=%s from company match (cik=%s)",
+                     ticker, cik)
+
         max_tier = data.get("max_tier", 3)
         items    = data.get("items", [])
         if not isinstance(max_tier, int):

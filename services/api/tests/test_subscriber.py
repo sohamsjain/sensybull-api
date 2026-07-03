@@ -212,3 +212,28 @@ class TestNonEightKForms:
         assert event.max_tier == 2
         emitted = [e for e in sio.emitted if e["event"] == "filing_event"]
         assert emitted, "filing_event should be emitted for Form 4 events"
+
+    def test_missing_ticker_backfilled_from_cik_match(self, app, db_session,
+                                                      sample_company):
+        """Form 15/25 filings arrive after SEC drops the ticker mapping for
+        a deregistered company; the CIK-matched Company row still knows the
+        ticker and must backfill it (restores logo, reactions, movers)."""
+        from app.models.price_reaction import PriceReaction
+
+        _handle_event(app, FakeSocketIO(), _make_filing_json(
+            edgar_id="test-sub-form15",
+            signal_type="15-12B",
+            ticker="",                      # SEC ticker file no longer maps it
+            cik=sample_company.cik,         # "0000320193"
+            max_tier=1,
+            items=[],
+            event_types=["Going Dark"],
+        ))
+
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-form15").first()
+        assert event is not None
+        assert event.company_id == sample_company.id
+        assert event.ticker == "AAPL"       # backfilled from the company row
+        # Ticker presence gates reaction scheduling — must now fire
+        rows = PriceReaction.query.filter_by(filing_event_id=event.id).all()
+        assert len(rows) == 6
