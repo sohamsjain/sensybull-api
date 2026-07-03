@@ -19,9 +19,19 @@ def register_cli(app):
     @with_appcontext
     def sync_market_data_cmd():
         """Refresh shares outstanding (EDGAR) and last price/market cap (Alpaca)."""
+        from app.models.company import Company
         from app.services.market_data.sync import sync_market_data
         shares, prices = sync_market_data()
-        click.echo(f'Market data synced: shares updated for {shares}, prices for {prices} companies')
+        caps = Company.query.filter(Company.market_cap.isnot(None)).count()
+        missing = (Company.query
+                   .filter(Company.last_price.isnot(None))
+                   .filter(Company.shares_outstanding.is_(None))
+                   .count())
+        click.echo(
+            f'Market data synced: shares updated for {shares}, prices for {prices} '
+            f'companies; {caps} companies have market caps, {missing} priced '
+            f'companies still missing share counts (backfills on next runs)'
+        )
 
     @app.cli.command('backfill-reactions')
     @click.option('--days', default=7, show_default=True,
