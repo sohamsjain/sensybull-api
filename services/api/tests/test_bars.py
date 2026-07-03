@@ -2,8 +2,20 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from app.models.company import Company
 from app.routes import companies as companies_module
+
+
+@pytest.fixture(autouse=True)
+def no_cache():
+    """Isolate tests from any live Redis (CI runs one; a bars response
+    cached by one test must not leak into the next). The bars route imports
+    the cache helpers at call time, so patching the module works."""
+    with patch("app.services.market_data.cache.cache_get", return_value=None), \
+         patch("app.services.market_data.cache.cache_set"):
+        yield
 
 
 class TestCompanyBars:
