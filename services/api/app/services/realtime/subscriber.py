@@ -11,7 +11,7 @@ contain the relevant company.
 import json
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
 
@@ -134,6 +134,8 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             log.exception("Subscriber: DB commit failed for edgar_id=%s", edgar_id)
             return
 
+        _schedule_price_reactions(db, event)
+
         payload = event.to_ws_payload()
 
         # Fan-out: find every user who has this company in a watchlist
@@ -168,6 +170,34 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             "Subscriber: stored + emitted edgar_id=%s ticker=%s tier=%d users=%d",
             edgar_id, ticker or "—", max_tier, len(user_ids),
         )
+
+
+def _schedule_price_reactions(db, event) -> None:
+    """Queue the six interval price measurements for a freshly stored event.
+
+    Rows are the durable work queue for the reaction worker (see
+    app/services/market_data/reaction_worker.py). The unique constraint on
+    (filing_event_id, interval) makes this idempotent; failure here must
+    never block event delivery.
+    """
+    from app.models.price_reaction import INTERVALS, PriceReaction
+
+    if not event.ticker or not event.filing_date:
+        return
+    try:
+        for interval, seconds in INTERVALS.items():
+            db.session.add(PriceReaction(
+                filing_event_id=event.id,
+                ticker=event.ticker,
+                interval=interval,
+                measure_at=event.filing_date + timedelta(seconds=seconds),
+            ))
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+    except Exception:
+        db.session.rollback()
+        log.exception("Failed to schedule price reactions for event %s", event.id)
 
 
 def start_subscriber(app, socketio) -> threading.Thread:

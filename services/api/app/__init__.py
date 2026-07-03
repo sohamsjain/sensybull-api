@@ -92,6 +92,7 @@ def create_app(config_class=Config):
     from app.routes.events import events_bp
     from app.routes.alerts import alerts_bp
     from app.routes.chats import chats_bp
+    from app.routes.movers import movers_bp
 
     # API v1 routes
     API_V1 = '/api/v1'
@@ -103,6 +104,7 @@ def create_app(config_class=Config):
     app.register_blueprint(events_bp, url_prefix=f'{API_V1}/events')
     app.register_blueprint(alerts_bp, url_prefix=f'{API_V1}/alerts')
     app.register_blueprint(chats_bp, url_prefix=f'{API_V1}/chats')
+    app.register_blueprint(movers_bp, url_prefix=f'{API_V1}/movers')
 
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)
@@ -163,5 +165,10 @@ def create_app(config_class=Config):
     if os.environ.get("REDIS_URL"):
         from app.services.realtime.subscriber import start_subscriber
         start_subscriber(app, socketio)
+
+    # Start the price-reaction worker (skip when Alpaca isn't configured)
+    if os.environ.get("REDIS_URL") and os.environ.get("ALPACA_API_KEY_ID"):
+        from app.services.market_data.reaction_worker import start_reaction_worker
+        start_reaction_worker(app, socketio)
 
     return app

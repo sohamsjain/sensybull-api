@@ -5,6 +5,7 @@ from app.models.filing import Filing  # noqa: F401
 from app.models.filing_event import FilingEvent  # noqa: F401
 from app.models.event_type import EventType  # noqa: F401
 from app.models.catalyst import Catalyst  # noqa: F401
+from app.models.price_reaction import PriceReaction  # noqa: F401
 from app.models.auth_token import AuthToken, AuthTokenPurpose  # noqa: F401
 from app.models.alert_preference import AlertPreference  # noqa: F401
 from app.models.notification import Notification  # noqa: F401

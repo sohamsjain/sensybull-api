@@ -51,6 +51,12 @@ services:
         sync: false
       - key: SEC_USER_AGENT
         sync: false
+      - key: ALPACA_API_KEY_ID
+        sync: false
+      - key: ALPACA_API_SECRET_KEY
+        sync: false
+      - key: ALPACA_FEED
+        value: iex
 
   # ── Ingest service ────────────────────────────────────────────────────
   - type: worker
@@ -89,6 +95,12 @@ services:
         generateValue: true
       - key: SEC_USER_AGENT
         sync: false
+      - key: ALPACA_API_KEY_ID
+        sync: false
+      - key: ALPACA_API_SECRET_KEY
+        sync: false
+      - key: ALPACA_FEED
+        value: iex
 
   # ── Redis ─────────────────────────────────────────────────────────────
   - type: redis

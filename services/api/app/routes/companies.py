@@ -82,6 +82,58 @@ def get_company(company_id):
     return jsonify({'company': company_schema.dump(company)})
 
 
+# timeframe / lookback whitelists for the bars proxy
+BAR_TIMEFRAMES = {'1D': '1Day', '1H': '1Hour', '15Min': '15Min'}
+BAR_LOOKBACK_DAYS = {'1M': 31, '3M': 93, '6M': 186, '1Y': 366}
+
+
+@companies_bp.route('/<company_id>/bars', methods=['GET'])
+@jwt_required()
+def get_company_bars(company_id):
+    """OHLCV bars for the company's ticker (Alpaca proxy, Redis-cached 5 min).
+
+    Backs the frontend price chart with event markers.
+    """
+    from datetime import datetime, timedelta, timezone
+    from app.services.market_data import alpaca
+    from app.services.market_data.cache import cache_get, cache_set
+
+    company = Company.query.get_or_404(company_id)
+    if not company.ticker:
+        return jsonify({'error': 'no_ticker'}), 422
+
+    timeframe = request.args.get('timeframe', '1D')
+    lookback = request.args.get('lookback', '3M')
+    if timeframe not in BAR_TIMEFRAMES:
+        return jsonify({'error': f'timeframe must be one of {sorted(BAR_TIMEFRAMES)}'}), 400
+    if lookback not in BAR_LOOKBACK_DAYS:
+        return jsonify({'error': f'lookback must be one of {sorted(BAR_LOOKBACK_DAYS)}'}), 400
+
+    cache_key = f'bars:{company.ticker}:{timeframe}:{lookback}'
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+
+    symbol = alpaca.normalize_ticker(company.ticker)
+    start = datetime.now(timezone.utc) - timedelta(days=BAR_LOOKBACK_DAYS[lookback])
+    try:
+        bars = alpaca.get_bars([symbol], BAR_TIMEFRAMES[timeframe], start.isoformat())
+    except alpaca.AlpacaError:
+        return jsonify({'error': 'Market data temporarily unavailable'}), 503
+
+    response = {
+        'ticker': company.ticker,
+        'timeframe': timeframe,
+        'lookback': lookback,
+        'bars': [
+            {'t': b['t'], 'o': b['o'], 'h': b['h'], 'l': b['l'], 'c': b['c'], 'v': b['v']}
+            for b in bars.get(symbol, [])
+        ],
+    }
+    cache_set(cache_key, response, 300)
+    return jsonify(response)
+
+
 @companies_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_company():
