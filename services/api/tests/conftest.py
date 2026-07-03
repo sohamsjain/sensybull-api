@@ -12,7 +12,9 @@ import pytest
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+# Deliberately unreachable port: the market-data cache must no-op in tests
+# (CI runs a real Redis on 6379, which leaked cached responses across tests)
+os.environ["REDIS_URL"] = "redis://localhost:6390/0"
 os.environ["SOCKETIO_ASYNC_MODE"] = "threading"
 
 from unittest.mock import patch

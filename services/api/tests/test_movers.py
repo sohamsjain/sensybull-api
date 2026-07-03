@@ -3,8 +3,20 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import pytest
+
 from app.models.filing_event import FilingEvent
 from app.routes import movers as movers_module
+
+
+@pytest.fixture(autouse=True)
+def no_cache():
+    """Isolate tests from any live Redis (CI runs one; responses cached by
+    one test must not leak into the next). Tests that exercise cache
+    behavior re-patch inside their own scope."""
+    with patch.object(movers_module, "cache_get", return_value=None), \
+         patch.object(movers_module, "cache_set"):
+        yield
 
 
 def _make_event(db_session, company, edgar_id, days_ago=1, max_tier=1, headline="Deal"):
