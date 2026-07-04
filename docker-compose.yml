@@ -58,16 +58,6 @@ services:
       - ./services/ingest:/app
     command: python main.py
 
-  web:
-    build: ./services/web
-    ports:
-      - "3000:3000"
-    environment:
-      - VITE_API_URL=http://localhost:5000
-    volumes:
-      - ./services/web:/app
-      - /app/node_modules
-
 volumes:
   pgdata:
 

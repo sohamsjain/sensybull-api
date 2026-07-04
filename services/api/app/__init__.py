@@ -139,7 +139,7 @@ def create_app(config_class=Config):
         checks = {'api': 'ok'}
         status = 200
         try:
-            r = _redis.from_url(app.config.get('REDIS_URL', os.environ.get('REDIS_URL', '')))
+            r = _redis.from_url(os.environ.get('REDIS_URL', ''))
             r.ping()
             checks['redis'] = 'ok'
         except Exception:

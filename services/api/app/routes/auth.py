@@ -78,6 +78,7 @@ def _lookup_valid_token(raw: str, purpose: str) -> AuthToken | None:
 # ---------- existing endpoints ---------------------------------------------
 
 @auth_bp.route('/register', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def register():
     try:
         data = registration_schema.load(request.json)
@@ -112,6 +113,7 @@ def register():
 
 
 @auth_bp.route('/login', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def login():
     try:
         data = login_schema.load(request.json)
@@ -133,6 +135,7 @@ def login():
 
 
 @auth_bp.route('/google', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def google_login():
     code = request.json.get('code')
     token = request.json.get('token')
@@ -198,6 +201,7 @@ def google_login():
 
 
 @auth_bp.route('/apple', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def apple_login():
     id_token = request.json.get('id_token')
     if not id_token:

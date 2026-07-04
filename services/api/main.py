@@ -48,5 +48,6 @@ if __name__ == "__main__":
     # use_reloader=False: the reloader spawns a second process, and since
     # create_app() starts the Redis subscriber at import, that would create a
     # duplicate subscriber. One process => one subscriber.
-    socketio.run(app, debug=True, host="0.0.0.0", port=5000,
+    debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    socketio.run(app, debug=debug, host="0.0.0.0", port=5000,
                  use_reloader=False)

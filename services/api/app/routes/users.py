@@ -12,7 +12,7 @@ users_schema = UserSchema(many=True)
 
 
 @users_bp.route('/', methods=['GET'])
-@jwt_required()
+@admin_required
 def get_all_users():
     users = User.query.all()
     return jsonify({'users': users_schema.dump(users), 'total': len(users)})
