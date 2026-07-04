@@ -21,6 +21,7 @@ from marshmallow import ValidationError
 from app import db
 from app.models.company import Company
 from app.models.position import Position
+from app.models.thesis_assessment import ThesisAssessment
 from app.utils.schemas import (
     PositionSchema,
     PositionCreateSchema,
@@ -48,6 +49,25 @@ def list_positions():
     return jsonify({"positions": positions_schema.dump(positions)})
 
 
+@positions_bp.route("/assessments", methods=["GET"])
+@jwt_required()
+def recent_assessments():
+    """Recent thesis assessments across all of the user's positions.
+
+    Backs the "thesis alerts" surface. Optional ?impact= filter
+    (supports|neutral|threatens|breaks) and ?limit= (default 50, max 200).
+    """
+    user_id = get_jwt_identity()
+    impact = request.args.get("impact")
+    limit = min(request.args.get("limit", 50, type=int), 200)
+
+    q = ThesisAssessment.query.filter_by(user_id=user_id)
+    if impact:
+        q = q.filter(ThesisAssessment.impact == impact)
+    rows = q.order_by(ThesisAssessment.created_at.desc()).limit(limit).all()
+    return jsonify({"assessments": [a.to_payload() for a in rows]})
+
+
 @positions_bp.route("/<position_id>", methods=["GET"])
 @jwt_required()
 def get_position(position_id):
@@ -56,6 +76,23 @@ def get_position(position_id):
     if position.user_id != user_id:
         return jsonify({"error": "Access denied"}), 403
     return jsonify({"position": position_schema.dump(position)})
+
+
+@positions_bp.route("/<position_id>/assessments", methods=["GET"])
+@jwt_required()
+def position_assessments(position_id):
+    """Thesis-assessment history for one position, newest first."""
+    user_id = get_jwt_identity()
+    position = Position.query.get_or_404(position_id)
+    if position.user_id != user_id:
+        return jsonify({"error": "Access denied"}), 403
+    rows = (
+        ThesisAssessment.query
+        .filter_by(position_id=position.id)
+        .order_by(ThesisAssessment.created_at.desc())
+        .all()
+    )
+    return jsonify({"assessments": [a.to_payload() for a in rows]})
 
 
 @positions_bp.route("/", methods=["POST"])

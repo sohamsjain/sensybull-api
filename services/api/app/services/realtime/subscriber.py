@@ -176,6 +176,12 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         from app.services.alerts.dispatcher import trigger_alerts
         trigger_alerts(app, event.id, user_ids)
 
+        # Evaluate the event against holders' theses (async — never blocks).
+        # Runs independently of watchlist membership: a held position is
+        # watched by definition.
+        from app.services.thesis.engine import trigger_thesis_assessments
+        trigger_thesis_assessments(app, event.id)
+
         log.info(
             "Subscriber: stored + emitted edgar_id=%s ticker=%s tier=%d users=%d",
             edgar_id, ticker or "—", max_tier, len(user_ids),
