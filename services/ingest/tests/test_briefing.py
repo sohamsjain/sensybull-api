@@ -75,7 +75,7 @@ class TestGenerateBriefing:
         filing = _filing(form_type="SC 13D",
                          document_excerpt="Activist stake of 8.2%")
         client = self._mock_groq({
-            "headline": "Activist takes 8.2% stake; seeks strategic alternatives",
+            "headline": "An activist investor takes an 8.2% stake and wants strategic changes",
             "summary": "An activist crossed 5%.",
             "primary_event_type": "Activist Initial",
             "event_types": ["Activist Initial"],
