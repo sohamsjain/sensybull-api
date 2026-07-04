@@ -5,6 +5,7 @@ import logging
 import requests
 
 from app.services.alerts.channels.base import NotificationChannel
+from app.services.alerts import thesis_format
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class SlackChannel(NotificationChannel):
     def name(self) -> str:
         return 'slack'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, assessment=None) -> None:
         from app.models.channel_config import ChannelConfig
 
         channel_config = ChannelConfig.query.filter_by(
@@ -87,9 +88,18 @@ class SlackChannel(NotificationChannel):
         actions['elements'].append({
             'type': 'button',
             'text': {'type': 'plain_text', 'text': 'Open in Sensybull'},
-            'url': f'{frontend_url}/watchlist',
+            'url': f'{frontend_url}/{"positions" if thesis_format.line(assessment) else "watchlist"}',
         })
         blocks.append(actions)
+
+        # Lead with the thesis verdict (inserted last to keep the index-based
+        # block edits above stable).
+        thesis = thesis_format.line(assessment)
+        if thesis:
+            blocks.insert(0, {
+                'type': 'section',
+                'text': {'type': 'mrkdwn', 'text': f"*{thesis}*"},
+            })
 
         resp = requests.post(webhook_url, json={'blocks': blocks}, timeout=10)
         resp.raise_for_status()
