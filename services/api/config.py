@@ -28,7 +28,17 @@ class Config:
 
     JWT_SECRET_KEY = _require_env('JWT_SECRET_KEY')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
-    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=999)
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=int(os.environ.get('JWT_REFRESH_DAYS') or 60))
+
+    # Tokens may arrive as a bearer header (access token, kept client-side) or
+    # a cookie (refresh token, set httpOnly so XSS can't read it). The refresh
+    # cookie is scoped to the auth routes and CSRF-protected (double-submit).
+    JWT_TOKEN_LOCATION = ['headers', 'cookies']
+    JWT_REFRESH_COOKIE_PATH = '/api/v1/auth'
+    JWT_COOKIE_CSRF_PROTECT = True
+    JWT_COOKIE_SECURE = os.environ.get('JWT_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
+    JWT_COOKIE_SAMESITE = os.environ.get('JWT_COOKIE_SAMESITE') or 'Lax'
+    JWT_COOKIE_DOMAIN = os.environ.get('JWT_COOKIE_DOMAIN')  # None => host-only cookie
     GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
     GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
     APPLE_CLIENT_ID = os.environ.get('APPLE_CLIENT_ID')

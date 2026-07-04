@@ -2,13 +2,15 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import (
-    create_access_token, create_refresh_token, get_jwt_identity, jwt_required,
+    create_access_token, create_refresh_token, get_jwt, get_jwt_identity,
+    jwt_required, set_refresh_cookies, unset_jwt_cookies,
 )
 from marshmallow import ValidationError
 
 from app import db, limiter
 from app.models.alert_preference import AlertPreference
 from app.models.auth_token import AuthToken, AuthTokenPurpose
+from app.models.token_blocklist import TokenBlocklist
 from app.models.user import User
 from app.services.email.sender import (
     send_magic_link, send_password_changed, send_password_reset,
@@ -32,6 +34,19 @@ change_password_schema = ChangePasswordSchema()
 
 
 # ---------- helpers ---------------------------------------------------------
+
+def _auth_success(payload: dict, user_id: str, status: int = 200):
+    """Build a successful auth response.
+
+    The access token goes in the JSON body (the client sends it as a bearer
+    header). The refresh token is delivered only as an httpOnly, CSRF-protected
+    cookie so it is never exposed to JavaScript / XSS.
+    """
+    payload['access_token'] = create_access_token(identity=user_id)
+    resp = jsonify(payload)
+    set_refresh_cookies(resp, create_refresh_token(identity=user_id))
+    return resp, status
+
 
 def _issue_verification_email(user: User) -> None:
     """Create an email-verification token row and dispatch the email.
@@ -78,6 +93,7 @@ def _lookup_valid_token(raw: str, purpose: str) -> AuthToken | None:
 # ---------- existing endpoints ---------------------------------------------
 
 @auth_bp.route('/register', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def register():
     try:
         data = registration_schema.load(request.json)
@@ -101,17 +117,14 @@ def register():
 
     _issue_verification_email(user)
 
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
-    return jsonify({
+    return _auth_success({
         'message': 'User created successfully. Check your email to verify your account.',
         'user': user_schema.dump(user),
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-    }), 201
+    }, user.id, status=201)
 
 
 @auth_bp.route('/login', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def login():
     try:
         data = login_schema.load(request.json)
@@ -122,17 +135,14 @@ def login():
     if not user or not user.check_password(data['password']):
         return jsonify({'error': 'Invalid email or password'}), 401
 
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
-    return jsonify({
+    return _auth_success({
         'message': 'Login successful',
         'user': user_schema.dump(user),
-        'access_token': access_token,
-        'refresh_token': refresh_token
-    })
+    }, user.id)
 
 
 @auth_bp.route('/google', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def google_login():
     code = request.json.get('code')
     token = request.json.get('token')
@@ -187,17 +197,14 @@ def google_login():
         except Exception:
             current_app.logger.exception('Failed to send welcome email for user_id=%s', user.id)
 
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
-    return jsonify({
+    return _auth_success({
         'message': 'Google login successful',
         'user': user_schema.dump(user),
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-    })
+    }, user.id)
 
 
 @auth_bp.route('/apple', methods=['POST'])
+@limiter.limit('10 per minute; 50 per hour')
 def apple_login():
     id_token = request.json.get('id_token')
     if not id_token:
@@ -250,14 +257,10 @@ def apple_login():
         except Exception:
             current_app.logger.exception('Failed to send welcome email for user_id=%s', user.id)
 
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
-    return jsonify({
+    return _auth_success({
         'message': 'Apple login successful',
         'user': user_schema.dump(user),
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-    })
+    }, user.id)
 
 
 @auth_bp.route('/refresh', methods=['POST'])
@@ -271,6 +274,31 @@ def refresh():
         'access_token': create_access_token(identity=user_id),
         'user': user_schema.dump(user)
     })
+
+
+@auth_bp.route('/logout', methods=['POST'])
+@jwt_required(refresh=True)
+def logout():
+    """Revoke the current refresh token and clear the auth cookies.
+
+    Blocklisting the token's jti gives real server-side logout: the token is
+    rejected on any later refresh even though it hasn't expired.
+    """
+    claims = get_jwt()
+    try:
+        db.session.add(TokenBlocklist(
+            jti=claims['jti'],
+            token_type=claims.get('type', 'refresh'),
+            user_id=get_jwt_identity(),
+            expires_at=datetime.fromtimestamp(claims['exp'], tz=timezone.utc),
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Failed to blocklist refresh token on logout')
+    resp = jsonify({'message': 'Logged out'})
+    unset_jwt_cookies(resp)
+    return resp
 
 
 @auth_bp.route('/me', methods=['GET'])
@@ -350,14 +378,10 @@ def verify_magic_link():
         db.session.rollback()
         return jsonify({'error': 'Failed to verify magic link'}), 500
 
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
-    return jsonify({
+    return _auth_success({
         'message': 'Login successful',
         'user': user_schema.dump(user),
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-    })
+    }, user.id)
 
 
 # ---------- email verification ---------------------------------------------

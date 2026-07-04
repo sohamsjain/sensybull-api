@@ -9,7 +9,7 @@
 ## Project Structure
 - `services/api/` — Flask REST API + WebSocket server
 - `services/ingest/` — SEC EDGAR polling + LLM briefing pipeline
-- `services/web/` — Throwaway prototype (not production frontend)
+- Production frontend lives in the separate `sensybull-web` repo (Next.js)
 
 ## Related Projects
 - Frontend: ~/Projects/sensybull-web (Next.js)

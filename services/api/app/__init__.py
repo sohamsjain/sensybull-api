@@ -27,9 +27,22 @@ def create_app(config_class=Config):
     migrate.init_app(app, db)
     jwt.init_app(app)
 
+    @jwt.token_in_blocklist_loader
+    def _check_if_token_revoked(jwt_header, jwt_payload):
+        # Only refresh tokens are revocable (on logout). Access tokens are
+        # short-lived and checked on every request, so we skip the DB hit for
+        # them and let them expire naturally.
+        if jwt_payload.get('type') != 'refresh':
+            return False
+        from app.models.token_blocklist import TokenBlocklist
+        jti = jwt_payload['jti']
+        return db.session.query(TokenBlocklist.id).filter_by(jti=jti).first() is not None
+
     origins_raw = app.config.get('CORS_ALLOWED_ORIGINS') or app.config['FRONTEND_URL']
     allowed_origins = [o.strip() for o in origins_raw.split(',') if o.strip()]
-    CORS(app, origins=allowed_origins)
+    # supports_credentials lets the httpOnly refresh cookie flow cross-origin;
+    # it requires an explicit origin allow-list (never a wildcard), which we have.
+    CORS(app, origins=allowed_origins, supports_credentials=True)
     limiter.init_app(app)
     socketio.init_app(app, cors_allowed_origins=allowed_origins)
     app.url_map.strict_slashes = False
@@ -141,7 +154,7 @@ def create_app(config_class=Config):
         checks = {'api': 'ok'}
         status = 200
         try:
-            r = _redis.from_url(app.config.get('REDIS_URL', os.environ.get('REDIS_URL', '')))
+            r = _redis.from_url(os.environ.get('REDIS_URL', ''))
             r.ping()
             checks['redis'] = 'ok'
         except Exception:
