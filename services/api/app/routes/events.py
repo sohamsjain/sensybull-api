@@ -67,7 +67,11 @@ def get_events():
 
 @events_bp.route("/all", methods=["GET"])
 def get_all_events():
-    """Paginated feed of ALL events regardless of watchlist."""
+    """Paginated feed of ALL events regardless of watchlist.
+
+    Ordered by when we received each event (created_at), so the REST
+    pages line up with the live socket stream the feed prepends onto.
+    """
     page        = request.args.get("page", 1, type=int)
     per_page    = request.args.get("per_page", 50, type=int)
     max_tier    = request.args.get("max_tier", 3, type=int)
@@ -83,7 +87,7 @@ def get_all_events():
         q = q.filter(FilingEvent.signal_type == signal_type)
     q = _apply_event_type_filter(q, event_type)
 
-    pagination = q.order_by(FilingEvent.filing_date.desc()).paginate(
+    pagination = q.order_by(FilingEvent.created_at.desc()).paginate(
         page=page, per_page=min(per_page, 200), error_out=False
     )
     return jsonify({

@@ -1,5 +1,7 @@
 """Tests for filing event endpoints."""
 
+from datetime import datetime, timedelta, timezone
+
 from app.models.filing_event import FilingEvent
 
 
@@ -101,6 +103,39 @@ class TestGetAllEvents:
         data = resp.get_json()
         assert len(data["events"]) == 2
         assert data["total"] == 5
+
+    def test_all_events_ordered_by_received_time(self, client, sample_company, db_session):
+        """The public feed streams in received order (created_at), even when
+        an older filing_date arrives after a newer one."""
+        now = datetime.now(timezone.utc)
+        late_arrival = FilingEvent(
+            edgar_id="received-second",
+            signal_type="8-K",
+            company_id=sample_company.id,
+            cik=sample_company.cik,
+            ticker=sample_company.ticker,
+            company_name=sample_company.name,
+            max_tier=2,
+            filing_date=now - timedelta(days=5),  # older filing…
+        )
+        early_arrival = FilingEvent(
+            edgar_id="received-first",
+            signal_type="8-K",
+            company_id=sample_company.id,
+            cik=sample_company.cik,
+            ticker=sample_company.ticker,
+            company_name=sample_company.name,
+            max_tier=2,
+            filing_date=now,
+        )
+        early_arrival.created_at = now - timedelta(minutes=10)
+        late_arrival.created_at = now  # …but received last
+        db_session.session.add_all([early_arrival, late_arrival])
+        db_session.session.commit()
+
+        resp = client.get("/api/v1/events/all")
+        ids = [e["edgar_id"] for e in resp.get_json()["events"]]
+        assert ids.index("received-second") < ids.index("received-first")
 
 
 class TestGetEventTypes:
