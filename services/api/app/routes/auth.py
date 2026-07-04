@@ -378,14 +378,10 @@ def verify_magic_link():
         db.session.rollback()
         return jsonify({'error': 'Failed to verify magic link'}), 500
 
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
-    return jsonify({
+    return _auth_success({
         'message': 'Login successful',
         'user': user_schema.dump(user),
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-    })
+    }, user.id)
 
 
 # ---------- email verification ---------------------------------------------
