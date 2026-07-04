@@ -7,6 +7,7 @@ from app.models.event_type import EventType  # noqa: F401
 from app.models.catalyst import Catalyst  # noqa: F401
 from app.models.price_reaction import PriceReaction  # noqa: F401
 from app.models.auth_token import AuthToken, AuthTokenPurpose  # noqa: F401
+from app.models.token_blocklist import TokenBlocklist  # noqa: F401
 from app.models.alert_preference import AlertPreference  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.company_read_state import CompanyReadState  # noqa: F401

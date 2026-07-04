@@ -1,6 +1,14 @@
 """Tests for authentication endpoints."""
 
 
+def _cookie_from(resp, name):
+    """Return the value of a Set-Cookie named `name`, or None."""
+    for c in resp.headers.getlist("Set-Cookie"):
+        if c.startswith(name + "="):
+            return c.split("=", 1)[1].split(";", 1)[0]
+    return None
+
+
 class TestRegister:
     def test_register_success(self, client):
         resp = client.post("/api/v1/auth/register", json={
@@ -11,7 +19,9 @@ class TestRegister:
         assert resp.status_code == 201
         data = resp.get_json()
         assert data["access_token"]
-        assert data["refresh_token"]
+        # Refresh token is delivered as an httpOnly cookie, not in the body.
+        assert "refresh_token" not in data
+        assert _cookie_from(resp, "refresh_token_cookie")
         assert data["user"]["email"] == "new@example.com"
 
     def test_register_duplicate_email(self, client, sample_user):
@@ -36,7 +46,8 @@ class TestLogin:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["access_token"]
-        assert data["refresh_token"]
+        assert "refresh_token" not in data
+        assert _cookie_from(resp, "refresh_token_cookie")
 
     def test_login_wrong_password(self, client, sample_user):
         resp = client.post("/api/v1/auth/login", json={
@@ -59,7 +70,10 @@ class TestRefresh:
             "email": "test@example.com",
             "password": "testpass123",
         })
-        refresh_token = login.get_json()["refresh_token"]
+        # The refresh token now lives in an httpOnly cookie; a bearer header
+        # is still an accepted token location (bypasses CSRF, as in a browser
+        # the cookie + CSRF header path is used instead).
+        refresh_token = _cookie_from(login, "refresh_token_cookie")
 
         resp = client.post("/api/v1/auth/refresh", headers={
             "Authorization": f"Bearer {refresh_token}",
@@ -70,6 +84,26 @@ class TestRefresh:
     def test_refresh_with_access_token_fails(self, client, auth_headers):
         resp = client.post("/api/v1/auth/refresh", headers=auth_headers)
         assert resp.status_code == 422  # JWT type mismatch
+
+
+class TestLogout:
+    def test_logout_revokes_refresh_token(self, client, sample_user):
+        login = client.post("/api/v1/auth/login", json={
+            "email": "test@example.com",
+            "password": "testpass123",
+        })
+        refresh_token = _cookie_from(login, "refresh_token_cookie")
+        auth = {"Authorization": f"Bearer {refresh_token}"}
+
+        # Refresh works before logout.
+        assert client.post("/api/v1/auth/refresh", headers=auth).status_code == 200
+
+        out = client.post("/api/v1/auth/logout", headers=auth)
+        assert out.status_code == 200
+
+        # After logout the same refresh token is blocklisted → rejected.
+        resp = client.post("/api/v1/auth/refresh", headers=auth)
+        assert resp.status_code == 401
 
 
 class TestMe:
