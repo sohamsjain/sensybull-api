@@ -1,14 +1,14 @@
 # services/api/app/models/company_read_state.py
 """
-CompanyReadState — per-user, per-company chat state.
+CompanyReadState — per-user, per-company watchlist read state.
 
-Powers the chat-style watchlist experience: tracks when a user last
+Powers the watchlist inbox: tracks when a user last
 opened a company's event history (so unread counts can be computed)
 and whether the company is muted for alert delivery.
 
 A row is created lazily — when a company is added to a watchlist, when
-the user opens the chat, or when they toggle mute. No row means the
-user has never opened the chat.
+the user opens the company's history, or when they toggle mute. No row
+means the user has never opened it.
 """
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,7 +27,7 @@ class CompanyReadState(BaseModel):
     company_id: so.Mapped[str] = so.mapped_column(
         sa.String(36), sa.ForeignKey('company.id', ondelete='CASCADE'),
         nullable=False, index=True)
-    # Null = chat never opened; unread counts fall back to full history
+    # Null = never opened; unread counts fall back to full history
     last_read_at: so.Mapped[Optional[datetime]] = so.mapped_column(
         sa.DateTime(timezone=True), nullable=True)
     muted: so.Mapped[bool] = so.mapped_column(

@@ -115,7 +115,7 @@ def add_company(watchlist_id):
 
     try:
         watchlist.companies.append(company)
-        # Start the chat "read" so a freshly added company shows no unread
+        # Initialize read state so a freshly added company shows no unread
         # backlog. Never reset an existing state (e.g. re-add on a second
         # watchlist must not clear genuine unreads).
         CompanyReadState.ensure(

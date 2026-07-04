@@ -102,9 +102,12 @@ identify the deal, the parties, the economics, and the status.
 
 Given a {{form_name}} filing{{category_note}}, produce a JSON object with these fields:
 
-1. "headline" — a short, punchy headline (max 100 chars). Use semicolons to
-   separate key facts. Focus on WHAT is happening, not who filed.
-   Good: "SPAC merger with FGMC; forward purchase agreement for up to 3M shares"
+1. "headline" — one short, plain-English sentence (max 100 chars) that an
+   everyday reader would understand at a glance. Write it the way a person
+   would say it aloud — no semicolon-separated fragments, no jargon strings.
+   Focus on WHAT is happening, not who filed.
+   Good: "FGMC agrees to a SPAC merger with a forward purchase of up to 3M shares"
+   Bad:  "SPAC merger with FGMC; forward purchase agreement for up to 3M shares"
    Bad:  "FG Merger II Corp. enters into Forward Purchase Agreement with Atsion"
 
 2. "summary" — a 2-4 sentence paragraph written from the SUBJECT COMPANY's

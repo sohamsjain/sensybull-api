@@ -14,6 +14,8 @@ from app.models.base import BaseModel
 
 class FilingEvent(BaseModel):
     __tablename__ = "filing_event"
+    # created_at (from BaseModel) is the received-order sort key for /events/all
+    __table_args__ = (sa.Index("ix_filing_event_created_at", "created_at"),)
 
     # Ingest-side identity
     edgar_id: so.Mapped[str] = so.mapped_column(

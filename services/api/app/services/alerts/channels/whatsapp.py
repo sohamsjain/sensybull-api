@@ -60,7 +60,7 @@ class WhatsAppChannel(NotificationChannel):
             body += f"\n{bullet_text}\n"
         if event.edgar_url:
             body += f"\nEDGAR: {event.edgar_url}"
-        body += f"\n{frontend_url}/chats"
+        body += f"\n{frontend_url}/watchlist"
 
         client = Client(account_sid, auth_token)
         client.messages.create(

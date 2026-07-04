@@ -57,7 +57,7 @@ class TelegramChannel(NotificationChannel):
             text += f"\n{bullet_text}\n"
         if event.edgar_url:
             text += f"\n[View on EDGAR]({event.edgar_url})"
-        text += f"\n[Open in Sensybull]({frontend_url}/chats)"
+        text += f"\n[Open in Sensybull]({frontend_url}/watchlist)"
 
         url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
         resp = requests.post(url, json={
