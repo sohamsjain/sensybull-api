@@ -87,7 +87,7 @@ class SlackChannel(NotificationChannel):
         actions['elements'].append({
             'type': 'button',
             'text': {'type': 'plain_text', 'text': 'Open in Sensybull'},
-            'url': f'{frontend_url}/chats',
+            'url': f'{frontend_url}/watchlist',
         })
         blocks.append(actions)
 

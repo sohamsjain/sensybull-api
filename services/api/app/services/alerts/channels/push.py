@@ -44,7 +44,7 @@ class PushChannel(NotificationChannel):
             'body': briefing.get('investor_takeaway')
                     or (briefing.get('summary') or '')[:180]
                     or f'{tier_label} priority {event.signal_type} filing',
-            'url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/chats",
+            'url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/watchlist",
             'tag': event.id,
         })
         claims_sub = cfg.get('VAPID_SUBJECT') or f"mailto:{cfg.get('SUPPORT_EMAIL', 'support@sensybull.com')}"

@@ -49,7 +49,7 @@ class SmsChannel(NotificationChannel):
             f"[Sensybull] {tier_label} Priority\n"
             f"{event.ticker or event.company_name}: "
             f"{briefing.get('headline', 'New SEC Filing')}\n"
-            f"{frontend_url}/chats"
+            f"{frontend_url}/watchlist"
         )
 
         client = Client(account_sid, auth_token)

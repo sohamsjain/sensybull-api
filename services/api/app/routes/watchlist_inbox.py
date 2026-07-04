@@ -1,14 +1,14 @@
-# services/api/app/routes/chats.py
+# services/api/app/routes/watchlist_inbox.py
 """
-Chat-style watchlist endpoints.
+Watchlist inbox endpoints.
 
-Each company on a user's watchlists is a "chat": the company's filing
-events are its message history, and CompanyReadState tracks what the
-user has seen and whether the chat is muted.
+Each company on a user's watchlists is an inbox entry: the company's
+filing events are its history, and CompanyReadState tracks what the
+user has seen and whether the company's alerts are muted.
 
-GET  /chats/                       chat list with unread counts + last-event previews
-POST /chats/<company_id>/read      mark a company's history as read
-PUT  /chats/<company_id>/mute      mute/unmute a company's alerts
+GET  /watchlist/                       watchlist companies with unread counts + last-event previews
+POST /watchlist/<company_id>/read      mark a company's history as read
+PUT  /watchlist/<company_id>/mute      mute/unmute a company's alerts
 """
 from datetime import datetime, timezone
 
@@ -22,7 +22,7 @@ from app.models.company_read_state import CompanyReadState
 from app.models.filing_event import FilingEvent
 from app.models.watchlist import Watchlist
 
-chats_bp = Blueprint('chats', __name__)
+watchlist_inbox_bp = Blueprint('watchlist_inbox', __name__)
 
 
 def _user_company_ids(user_id: str) -> set[str]:
@@ -60,7 +60,7 @@ def _form_label(signal_type: str) -> str:
 
 
 def _event_preview(event: FilingEvent) -> dict:
-    """Compact 'last message' payload for the chat list."""
+    """Compact last-event payload for the watchlist inbox."""
     briefing = event.briefing_json or {}
     return {
         'id': event.id,
@@ -83,18 +83,18 @@ def _read_state_payload(state: CompanyReadState) -> dict:
     }
 
 
-@chats_bp.route('/', methods=['GET'])
+@watchlist_inbox_bp.route('/', methods=['GET'])
 @jwt_required()
-def get_chats():
-    """Chat list: every watchlist company with unread count and last event.
+def get_watchlist_inbox():
+    """Watchlist inbox: every watchlist company with unread count and last event.
 
-    Sorted with unread chats first, then by most recent activity, so the
-    list reads like a messaging inbox.
+    Sorted with unread companies first, then by most recent activity.
     """
     user_id = get_jwt_identity()
     company_ids = _user_company_ids(user_id)
     if not company_ids:
-        return jsonify({'chats': [], 'total_unread': 0})
+        # 'chats' key kept for one deploy cycle; TODO remove after web deploy
+        return jsonify({'items': [], 'chats': [], 'total_unread': 0})
 
     companies = Company.query.filter(Company.id.in_(company_ids)).all()
     states = {
@@ -125,7 +125,7 @@ def get_chats():
     }
 
     # Unread counts in one query: events newer than each company's last_read_at
-    # (no read state row = chat never opened = full history is unread)
+    # (no read state row = never opened = full history is unread)
     unread_conditions = []
     for cid in company_ids:
         state = states.get(cid)
@@ -143,11 +143,11 @@ def get_chats():
         .all()
     )
 
-    chats = []
+    items = []
     for company in companies:
         state = states.get(company.id)
         latest = latest_by_company.get(company.id)
-        chats.append({
+        items.append({
             'company': {
                 'id': company.id,
                 'ticker': company.ticker,
@@ -163,17 +163,18 @@ def get_chats():
         })
 
     # Inbox ordering: most recent activity first (ISO strings sort correctly),
-    # then a stable re-sort floats unread chats to the top.
-    chats.sort(key=lambda c: c['last_activity_at'] or '', reverse=True)
-    chats.sort(key=lambda c: c['unread_count'] == 0)
+    # then a stable re-sort floats unread companies to the top.
+    items.sort(key=lambda c: c['last_activity_at'] or '', reverse=True)
+    items.sort(key=lambda c: c['unread_count'] == 0)
 
     return jsonify({
-        'chats': chats,
-        'total_unread': sum(c['unread_count'] for c in chats),
+        'items': items,
+        'chats': items,  # legacy key; TODO remove after web deploy
+        'total_unread': sum(c['unread_count'] for c in items),
     })
 
 
-@chats_bp.route('/<company_id>/read', methods=['POST'])
+@watchlist_inbox_bp.route('/<company_id>/read', methods=['POST'])
 @jwt_required()
 def mark_read(company_id):
     """Mark a company's event history as read (sets last_read_at to now)."""
@@ -193,7 +194,7 @@ def mark_read(company_id):
         return jsonify({'error': 'Failed to mark as read'}), 500
 
 
-@chats_bp.route('/<company_id>/mute', methods=['PUT'])
+@watchlist_inbox_bp.route('/<company_id>/mute', methods=['PUT'])
 @jwt_required()
 def set_mute(company_id):
     """Mute or unmute alert delivery for one company."""

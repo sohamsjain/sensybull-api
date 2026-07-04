@@ -69,7 +69,7 @@ def _dispatch_inner(app, event_id: str, user_ids: frozenset[str]) -> None:
         log.debug('Alert dispatcher: no matching preferences for event %s', event_id)
         return
 
-    # Users who muted this company's chat get no alerts for it
+    # Users who muted this company get no alerts for it
     if event.company_id:
         muted_user_ids = {
             rs.user_id

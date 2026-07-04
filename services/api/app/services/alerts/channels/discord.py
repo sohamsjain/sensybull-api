@@ -64,7 +64,7 @@ class DiscordChannel(NotificationChannel):
         if event.edgar_url:
             embed['fields'].append({
                 'name': 'Links',
-                'value': f"[EDGAR]({event.edgar_url}) | [Sensybull]({frontend_url}/chats)",
+                'value': f"[EDGAR]({event.edgar_url}) | [Sensybull]({frontend_url}/watchlist)",
                 'inline': True,
             })
 

@@ -681,24 +681,24 @@ OPENAPI_SPEC = {
             },
         },
 
-        # ── Chats ─────────────────────────────────────────────────────────
-        "/api/v1/chats/": {
+        # ── Watchlist inbox ───────────────────────────────────────────────
+        "/api/v1/watchlist/": {
             "get": {
-                "tags": ["Chats"],
-                "summary": "Chat list — watchlist companies with unread counts",
+                "tags": ["Watchlist"],
+                "summary": "Watchlist inbox — companies with unread filing counts",
                 "description": (
-                    "Returns every company across the user's watchlists as a chat: "
-                    "last filing event preview, unread count, mute state. Sorted "
-                    "with unread chats first, then by most recent activity."
+                    "Returns every company across the user's watchlists with its "
+                    "last filing event preview, unread count, and mute state. Sorted "
+                    "with unread companies first, then by most recent activity."
                 ),
                 "security": [{"BearerAuth": []}],
                 "responses": {
                     "200": {
-                        "description": "Chat list",
+                        "description": "Watchlist inbox",
                         "content": {"application/json": {"schema": {
                             "type": "object",
                             "properties": {
-                                "chats": {"type": "array", "items": {
+                                "items": {"type": "array", "items": {
                                     "type": "object",
                                     "properties": {
                                         "company": {"type": "object"},
@@ -716,9 +716,9 @@ OPENAPI_SPEC = {
                 },
             },
         },
-        "/api/v1/chats/{company_id}/read": {
+        "/api/v1/watchlist/{company_id}/read": {
             "post": {
-                "tags": ["Chats"],
+                "tags": ["Watchlist"],
                 "summary": "Mark a company's events as read",
                 "security": [{"BearerAuth": []}],
                 "parameters": [{"name": "company_id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}],
@@ -728,9 +728,9 @@ OPENAPI_SPEC = {
                 },
             },
         },
-        "/api/v1/chats/{company_id}/mute": {
+        "/api/v1/watchlist/{company_id}/mute": {
             "put": {
-                "tags": ["Chats"],
+                "tags": ["Watchlist"],
                 "summary": "Mute or unmute alerts for a company",
                 "security": [{"BearerAuth": []}],
                 "parameters": [{"name": "company_id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}],
@@ -758,6 +758,6 @@ OPENAPI_SPEC = {
         {"name": "Events", "description": "SEC 8-K filing events with AI briefings"},
         {"name": "Watchlists", "description": "User-defined company watchlists"},
         {"name": "Companies", "description": "SEC-registered companies"},
-        {"name": "Chats", "description": "Chat-style watchlist: per-company read state, unread counts, mute"},
+        {"name": "Watchlist", "description": "Watchlist inbox: per-company read state, unread counts, mute"},
     ],
 }

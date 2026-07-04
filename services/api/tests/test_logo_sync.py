@@ -1,14 +1,14 @@
 """Tests that API payloads include the logo_url field."""
 
 
-class TestChatPayloadLogo:
-    def test_chats_include_logo_url(self, client, auth_headers, db_session,
+class TestInboxPayloadLogo:
+    def test_inbox_includes_logo_url(self, client, auth_headers, db_session,
                                     sample_watchlist, sample_company):
         sample_company.logo_url = 'https://img/mark.svg'
         db_session.session.commit()
-        resp = client.get('/api/v1/chats/', headers=auth_headers)
-        chat = resp.get_json()['chats'][0]
-        assert chat['company']['logo_url'] == 'https://img/mark.svg'
+        resp = client.get('/api/v1/watchlist/', headers=auth_headers)
+        entry = resp.get_json()['items'][0]
+        assert entry['company']['logo_url'] == 'https://img/mark.svg'
 
     def test_company_detail_includes_logo_url(self, client, auth_headers, db_session,
                                               sample_company):
