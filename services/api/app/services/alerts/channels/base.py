@@ -16,13 +16,17 @@ class NotificationChannel(ABC):
         ...
 
     @abstractmethod
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, assessment=None) -> None:
         """Deliver a notification. Called from a worker thread.
 
         Args:
             user: User model instance.
             event: FilingEvent model instance.
             app: Flask application (for config and extensions).
+            assessment: Optional thesis-assessment dict (see
+                app/services/alerts/thesis_format). When present, the filing
+                threatened/broke/supported the user's thesis for this
+                company and the channel should lead with the verdict.
 
         Raises on failure — the dispatcher will catch and record the error.
         """

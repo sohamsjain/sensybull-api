@@ -159,3 +159,40 @@ class FilingEventSchema(Schema):
     event_types      = fields.List(fields.Str(), attribute="event_types_json", dump_only=True)
     event_type_details = fields.List(fields.Nested(EventTypeSchema), attribute="event_types", dump_only=True)
     received_at      = fields.DateTime(attribute="created_at", dump_only=True)
+
+
+class PositionSchema(Schema):
+    id                 = fields.Str(dump_only=True)
+    user_id            = fields.Str(dump_only=True)
+    company_id         = fields.Str(required=True)
+    direction          = fields.Str(dump_only=True)
+    shares             = fields.Decimal(as_string=True, allow_none=True)
+    cost_basis         = fields.Decimal(as_string=True, allow_none=True)
+    thesis             = fields.Str(allow_none=True)
+    thesis_status      = fields.Str(dump_only=True)
+    thesis_reviewed_at = fields.DateTime(dump_only=True, allow_none=True)
+    opened_at          = fields.Date(allow_none=True)
+    notes              = fields.Str(allow_none=True)
+    created_at         = fields.DateTime(dump_only=True)
+    updated_at         = fields.DateTime(dump_only=True, allow_none=True)
+    company            = fields.Nested('CompanySchema', exclude=('filings',), dump_only=True)
+
+
+class PositionCreateSchema(Schema):
+    company_id = fields.Str(required=True, validate=validate.Length(min=1, max=36))
+    direction  = fields.Str(validate=validate.OneOf(['long', 'short']))
+    shares     = fields.Decimal(as_string=True, allow_none=True)
+    cost_basis = fields.Decimal(as_string=True, allow_none=True)
+    thesis     = fields.Str(allow_none=True, validate=validate.Length(max=5000))
+    opened_at  = fields.Date(allow_none=True)
+    notes      = fields.Str(allow_none=True, validate=validate.Length(max=5000))
+
+
+class PositionUpdateSchema(Schema):
+    direction  = fields.Str(validate=validate.OneOf(['long', 'short']))
+    shares     = fields.Decimal(as_string=True, allow_none=True)
+    cost_basis = fields.Decimal(as_string=True, allow_none=True)
+    thesis     = fields.Str(allow_none=True, validate=validate.Length(max=5000))
+    thesis_status = fields.Str(validate=validate.OneOf(['intact', 'watch', 'broken']))
+    opened_at  = fields.Date(allow_none=True)
+    notes      = fields.Str(allow_none=True, validate=validate.Length(max=5000))

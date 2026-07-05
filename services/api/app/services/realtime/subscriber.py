@@ -172,9 +172,26 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         # and the existing client.html, keeping backward compat)
         socketio.emit("filing_event", payload, room="public", namespace="/feed")
 
-        # Dispatch alert notifications (async — does not block the subscriber)
+        # Users holding this company WITH a thesis are deferred from the
+        # regular bulk alert — the thesis engine sends them the thesis-aware
+        # variant (or a regular fallback for a neutral verdict) instead.
+        from app.services.thesis.engine import (
+            deferred_user_ids,
+            trigger_thesis_assessments,
+        )
+        thesis_user_ids = frozenset(
+            deferred_user_ids(company.id) if company else set()
+        )
+
+        # Dispatch regular alerts (async — does not block the subscriber)
         from app.services.alerts.dispatcher import trigger_alerts
-        trigger_alerts(app, event.id, user_ids)
+        trigger_alerts(app, event.id, user_ids, exclude_user_ids=thesis_user_ids)
+
+        # Evaluate the event against holders' theses (async — never blocks).
+        # Runs independently of watchlist membership: a held position is
+        # watched by definition. Passes the watchlist set so a neutral
+        # verdict can fall back to the regular alert.
+        trigger_thesis_assessments(app, event.id, watchlist_user_ids=frozenset(user_ids))
 
         log.info(
             "Subscriber: stored + emitted edgar_id=%s ticker=%s tier=%d users=%d",

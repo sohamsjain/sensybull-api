@@ -5,6 +5,7 @@ import logging
 import requests
 
 from app.services.alerts.channels.base import NotificationChannel
+from app.services.alerts import thesis_format
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class TelegramChannel(NotificationChannel):
     def name(self) -> str:
         return 'telegram'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, assessment=None) -> None:
         from app.models.channel_config import ChannelConfig
 
         cfg = app.config
@@ -47,7 +48,11 @@ class TelegramChannel(NotificationChannel):
         bullets = briefing.get('bullets', [])
         bullet_text = '\n'.join(f'• {b}' for b in bullets[:5]) if bullets else ''
 
-        text = (
+        thesis = thesis_format.line(assessment)
+        text = ""
+        if thesis:
+            text += f"{thesis}\n\n"
+        text += (
             f"*{event.ticker or event.company_name}* — {briefing.get('headline', 'New SEC Filing')}\n"
             f"Priority: {tier_label}\n"
         )

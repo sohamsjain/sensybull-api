@@ -101,6 +101,7 @@ def create_app(config_class=Config):
     from app.routes.users import users_bp
     from app.routes.companies import companies_bp
     from app.routes.watchlists import watchlists_bp
+    from app.routes.positions import positions_bp
     from app.routes.filings import filings_bp
     from app.routes.events import events_bp
     from app.routes.alerts import alerts_bp
@@ -113,6 +114,7 @@ def create_app(config_class=Config):
     app.register_blueprint(users_bp, url_prefix=f'{API_V1}/users')
     app.register_blueprint(companies_bp, url_prefix=f'{API_V1}/companies')
     app.register_blueprint(watchlists_bp, url_prefix=f'{API_V1}/watchlists')
+    app.register_blueprint(positions_bp, url_prefix=f'{API_V1}/positions')
     app.register_blueprint(filings_bp, url_prefix=f'{API_V1}/filings')
     app.register_blueprint(events_bp, url_prefix=f'{API_V1}/events')
     app.register_blueprint(alerts_bp, url_prefix=f'{API_V1}/alerts')

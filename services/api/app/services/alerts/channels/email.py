@@ -1,6 +1,7 @@
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
+from app.services.alerts import thesis_format
 from app.services.email.renderer import render
 from app.services.email.resend_client import EmailMessage
 
@@ -16,7 +17,7 @@ class EmailChannel(NotificationChannel):
     def name(self) -> str:
         return 'email'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, assessment=None) -> None:
         client = app.extensions.get('mail')
         if client is None:
             log.debug('EmailChannel: skipped (no RESEND_API_KEY) user=%s', user.id)
@@ -42,12 +43,21 @@ class EmailChannel(NotificationChannel):
             'filing_date': event.filing_date,
             'edgar_url': event.edgar_url or '',
             'event_url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/events/{event.id}",
+            # Thesis banner (rendered only when a verdict is present)
+            'thesis_label': thesis_format.label(assessment),
+            'thesis_emoji': thesis_format.emoji(assessment),
+            'thesis_color': thesis_format.color(assessment),
+            'thesis_rationale': (assessment or {}).get('rationale'),
         }
 
         html, text = render('filing_alert', context)
 
         prefix = cfg.get('ALERT_EMAIL_SUBJECT_PREFIX', '[Sensybull]')
-        subject = f"{prefix} {tier_label} Priority: {event.company_name or event.ticker} — {briefing.get('headline', 'New Filing')}"
+        thesis_subject = thesis_format.subject_prefix(assessment)
+        if thesis_subject:
+            subject = f"{prefix} {thesis_subject}: {event.company_name or event.ticker} — {briefing.get('headline', 'New Filing')}"
+        else:
+            subject = f"{prefix} {tier_label} Priority: {event.company_name or event.ticker} — {briefing.get('headline', 'New Filing')}"
 
         message = EmailMessage(
             to=user.email,
