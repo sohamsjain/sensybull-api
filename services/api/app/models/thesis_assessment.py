@@ -25,6 +25,12 @@ IMPACT_BREAKS = "breaks"        # contradicts the reason for holding → broken
 
 VALID_IMPACT = {IMPACT_SUPPORTS, IMPACT_NEUTRAL, IMPACT_THREATENS, IMPACT_BREAKS}
 
+# Which pass produced the stored verdict. Every filing gets a cheap triage
+# pass over the briefing; a non-neutral triage escalates to a deep pass over
+# the full filing text, price reaction, and the structured thesis.
+STAGE_TRIAGE = "triage"
+STAGE_DEEP = "deep"
+
 
 class ThesisAssessment(BaseModel):
     __tablename__ = "thesis_assessment"
@@ -42,6 +48,29 @@ class ThesisAssessment(BaseModel):
 
     impact: so.Mapped[str] = so.mapped_column(sa.String(12), nullable=False)
     rationale: so.Mapped[Optional[str]] = so.mapped_column(sa.Text, nullable=True)
+
+    # Two-stage judgment: which pass produced the verdict above, and (when a
+    # deep pass ran) what the cheap triage pass had said.
+    stage: so.Mapped[str] = so.mapped_column(
+        sa.String(8), nullable=False, default=STAGE_TRIAGE, server_default=STAGE_TRIAGE,
+    )
+    triage_impact: so.Mapped[Optional[str]] = so.mapped_column(sa.String(12), nullable=True)
+    # Deep-pass outputs. confidence ∈ [0,1]; assumption_verdicts_json is a
+    # list of {index, assumption, impact, rationale} judging each assumption
+    # of the structured thesis; citations_json is a list of verbatim filing
+    # passages that ground the verdict.
+    confidence: so.Mapped[Optional[float]] = so.mapped_column(sa.Float, nullable=True)
+    assumption_verdicts_json: so.Mapped[Optional[list]] = so.mapped_column(sa.JSON, nullable=True)
+    citations_json: so.Mapped[Optional[list]] = so.mapped_column(sa.JSON, nullable=True)
+
+    # True for backtest assessments run against historical filings when a
+    # thesis is created/edited. Informational only: they never move
+    # thesis_status and never fire alerts.
+    retroactive: so.Mapped[bool] = so.mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false(),
+    )
+    # Thesis version this verdict judged (see ThesisVersion).
+    thesis_version: so.Mapped[Optional[int]] = so.mapped_column(sa.Integer, nullable=True)
 
     # thesis_status transition this assessment drove (may be equal if no change)
     prior_status: so.Mapped[Optional[str]] = so.mapped_column(sa.String(12), nullable=True)
@@ -67,6 +96,13 @@ class ThesisAssessment(BaseModel):
             "filing_event_id": self.filing_event_id,
             "impact": self.impact,
             "rationale": self.rationale,
+            "stage": self.stage,
+            "triage_impact": self.triage_impact,
+            "confidence": self.confidence,
+            "assumption_verdicts": self.assumption_verdicts_json or [],
+            "citations": self.citations_json or [],
+            "retroactive": self.retroactive,
+            "thesis_version": self.thesis_version,
             "prior_status": self.prior_status,
             "new_status": self.new_status,
             "created_at": self._iso(self.created_at),
