@@ -6,8 +6,8 @@
   confidence, assumption_verdicts_json, citations_json), retroactive flag,
   and the thesis_version the verdict judged
 
-Revision ID: e1f2a3b4c5d6
-Revises: b5c6d7e8f9a0
+Revision ID: a9c1e3b5d7f9
+Revises: f5a6b7c8d9e0
 Create Date: 2026-07-05 12:00:00.000000
 
 """
@@ -15,8 +15,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = 'e1f2a3b4c5d6'
-down_revision = 'b5c6d7e8f9a0'
+revision = 'a9c1e3b5d7f9'
+down_revision = 'f5a6b7c8d9e0'
 branch_labels = None
 depends_on = None
 
