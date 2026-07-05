@@ -161,6 +161,17 @@ class FilingEventSchema(Schema):
     received_at      = fields.DateTime(attribute="created_at", dump_only=True)
 
 
+class ThesisStructuredSchema(Schema):
+    """Structured thesis: core claim + falsifiable assumptions + tripwires."""
+    core_claim    = fields.Str(required=True, validate=validate.Length(min=1, max=300))
+    assumptions   = fields.List(fields.Str(validate=validate.Length(min=1, max=300)),
+                                load_default=list, validate=validate.Length(max=5))
+    kill_criteria = fields.List(fields.Str(validate=validate.Length(min=1, max=300)),
+                                load_default=list, validate=validate.Length(max=3))
+    horizon       = fields.Str(allow_none=True, load_default=None,
+                               validate=validate.Length(max=100))
+
+
 class PositionSchema(Schema):
     id                 = fields.Str(dump_only=True)
     user_id            = fields.Str(dump_only=True)
@@ -169,6 +180,8 @@ class PositionSchema(Schema):
     shares             = fields.Decimal(as_string=True, allow_none=True)
     cost_basis         = fields.Decimal(as_string=True, allow_none=True)
     thesis             = fields.Str(allow_none=True)
+    thesis_structured  = fields.Nested(ThesisStructuredSchema, allow_none=True)
+    thesis_version     = fields.Int(dump_only=True)
     thesis_status      = fields.Str(dump_only=True)
     thesis_reviewed_at = fields.DateTime(dump_only=True, allow_none=True)
     opened_at          = fields.Date(allow_none=True)
@@ -184,6 +197,8 @@ class PositionCreateSchema(Schema):
     shares     = fields.Decimal(as_string=True, allow_none=True)
     cost_basis = fields.Decimal(as_string=True, allow_none=True)
     thesis     = fields.Str(allow_none=True, validate=validate.Length(max=5000))
+    thesis_structured = fields.Nested(ThesisStructuredSchema, allow_none=True)
+    thesis_source = fields.Str(validate=validate.OneOf(['user', 'assist']))
     opened_at  = fields.Date(allow_none=True)
     notes      = fields.Str(allow_none=True, validate=validate.Length(max=5000))
 
@@ -193,6 +208,26 @@ class PositionUpdateSchema(Schema):
     shares     = fields.Decimal(as_string=True, allow_none=True)
     cost_basis = fields.Decimal(as_string=True, allow_none=True)
     thesis     = fields.Str(allow_none=True, validate=validate.Length(max=5000))
+    thesis_structured = fields.Nested(ThesisStructuredSchema, allow_none=True)
+    thesis_source = fields.Str(validate=validate.OneOf(['user', 'assist']))
     thesis_status = fields.Str(validate=validate.OneOf(['intact', 'watch', 'broken']))
     opened_at  = fields.Date(allow_none=True)
     notes      = fields.Str(allow_none=True, validate=validate.Length(max=5000))
+
+
+class ThesisDraftSchema(Schema):
+    """Input to the AI thesis-drafting assistant."""
+    raw_text   = fields.Str(required=True, validate=validate.Length(min=1, max=5000))
+    company_id = fields.Str(allow_none=True, load_default=None,
+                            validate=validate.Length(max=36))
+    direction  = fields.Str(load_default='long', validate=validate.OneOf(['long', 'short']))
+
+
+class AnalystMessageSchema(Schema):
+    role    = fields.Str(required=True, validate=validate.OneOf(['user', 'assistant']))
+    content = fields.Str(required=True, validate=validate.Length(min=1, max=4000))
+
+
+class AnalystRequestSchema(Schema):
+    messages = fields.List(fields.Nested(AnalystMessageSchema), required=True,
+                           validate=validate.Length(min=1, max=24))

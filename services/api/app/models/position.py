@@ -51,6 +51,18 @@ class Position(BaseModel):
 
     # The reason for holding — the claim the thesis-break engine checks against.
     thesis: so.Mapped[Optional[str]] = so.mapped_column(sa.Text, nullable=True)
+    # Structured form of the thesis, when the user (or the drafting assistant)
+    # has broken it down. Shape:
+    #   {core_claim: str, assumptions: [str], kill_criteria: [str], horizon: str|null}
+    # `thesis` stays populated (derived from the structure if the user only
+    # provides the structured form) so every consumer of the free-text field
+    # keeps working.
+    thesis_structured: so.Mapped[Optional[dict]] = so.mapped_column(sa.JSON, nullable=True)
+    # Monotonic counter bumped on every thesis change; each value has a
+    # matching ThesisVersion snapshot row.
+    thesis_version: so.Mapped[int] = so.mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0",
+    )
     thesis_status: so.Mapped[str] = so.mapped_column(
         sa.String(12), nullable=False, default=THESIS_INTACT,
         server_default=THESIS_INTACT, index=True,
