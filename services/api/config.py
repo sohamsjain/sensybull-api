@@ -45,6 +45,9 @@ class Config:
     # Application identity (used in email subjects/templates/links)
     APP_NAME = os.environ.get('APP_NAME') or 'Sensybull'
     FRONTEND_URL = os.environ.get('FRONTEND_URL') or 'http://localhost:3000'
+    # Public origin used in shareable "Track on Sensybull" links (falls back
+    # to FRONTEND_URL; set explicitly if the app runs behind another host)
+    SHARE_BASE_URL = os.environ.get('SHARE_BASE_URL')
     SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL') or 'support@example.com'
 
     # Email (Resend)

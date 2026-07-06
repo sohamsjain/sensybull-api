@@ -107,6 +107,7 @@ def create_app(config_class=Config):
     from app.routes.alerts import alerts_bp
     from app.routes.watchlist_inbox import watchlist_inbox_bp
     from app.routes.movers import movers_bp
+    from app.routes.share import share_bp
 
     # API v1 routes
     API_V1 = '/api/v1'
@@ -122,6 +123,7 @@ def create_app(config_class=Config):
     # Legacy alias for the old frontend; TODO remove after web deploy
     app.register_blueprint(watchlist_inbox_bp, url_prefix=f'{API_V1}/chats', name='chats_compat')
     app.register_blueprint(movers_bp, url_prefix=f'{API_V1}/movers')
+    app.register_blueprint(share_bp, url_prefix=f'{API_V1}/share')
 
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)

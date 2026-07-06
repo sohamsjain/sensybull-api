@@ -641,6 +641,91 @@ OPENAPI_SPEC = {
             },
         },
 
+        "/api/v1/watchlists/track": {
+            "post": {
+                "tags": ["Share"],
+                "summary": "Track a company by ticker (idempotent)",
+                "description": "Backs the shareable /add/<symbol> deep links: validates the ticker, adds the company to the user's default watchlist (created on demand), and reports whether it was newly added. Re-posting the same symbol never duplicates.",
+                "security": [{"BearerAuth": []}],
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "required": ["symbol"],
+                    "properties": {
+                        "symbol": {"type": "string", "example": "MU"},
+                        "attribution": {"type": "object", "properties": {
+                            "ref": {"type": "string"}, "utm_source": {"type": "string"},
+                            "utm_medium": {"type": "string"}, "utm_campaign": {"type": "string"},
+                        }},
+                        "referrer": {"type": "string"},
+                    },
+                }}}},
+                "responses": {
+                    "200": {"description": "Tracked (added or already tracking)", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "enum": ["added", "already_tracking"]},
+                            "company": {"type": "object", "properties": {
+                                "id": {"type": "string", "format": "uuid"},
+                                "name": {"type": "string"}, "ticker": {"type": "string"},
+                            }},
+                            "watchlist_id": {"type": "string", "format": "uuid"},
+                        },
+                    }}}},
+                    "400": {"description": "Malformed ticker (invalid_symbol)"},
+                    "404": {"description": "No company with that ticker (unknown_ticker)"},
+                    "429": {"description": "Rate limited (30/min)"},
+                },
+            },
+        },
+
+        # ── Share ─────────────────────────────────────────────────────────
+        "/api/v1/share/{symbol}": {
+            "get": {
+                "tags": ["Share"],
+                "summary": "Public share info for a ticker",
+                "description": "Company info plus ready-to-paste link/HTML/markdown for /add/<symbol> track links. Public; exposes no internal IDs.",
+                "parameters": [{"name": "symbol", "in": "path", "required": True, "schema": {"type": "string"}, "example": "MU"}],
+                "responses": {
+                    "200": {"description": "Share info", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string"},
+                            "company": {"type": "object", "properties": {
+                                "name": {"type": "string"}, "ticker": {"type": "string"},
+                                "sector": {"type": "string", "nullable": True},
+                                "market_cap": {"type": "integer", "nullable": True},
+                            }},
+                            "url": {"type": "string"}, "html": {"type": "string"}, "markdown": {"type": "string"},
+                        },
+                    }}}},
+                    "400": {"description": "Malformed ticker (invalid_symbol)"},
+                    "404": {"description": "No company with that ticker (unknown_ticker)"},
+                },
+            },
+        },
+        "/api/v1/share/events": {
+            "post": {
+                "tags": ["Share"],
+                "summary": "Record a share-funnel analytics event",
+                "description": "Anonymous or authed. Allowed events: link_opened, button_clicked, auth_started, auth_completed, failed (watchlist_added / already_in_watchlist are recorded server-side by /watchlists/track). Device/browser/country are derived server-side.",
+                "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "required": ["event"],
+                    "properties": {
+                        "event": {"type": "string"}, "symbol": {"type": "string"},
+                        "ref": {"type": "string"}, "utm_source": {"type": "string"},
+                        "utm_medium": {"type": "string"}, "utm_campaign": {"type": "string"},
+                        "referrer": {"type": "string"}, "logged_in": {"type": "boolean"},
+                    },
+                }}}},
+                "responses": {
+                    "202": {"description": "Recorded"},
+                    "400": {"description": "Unknown event"},
+                    "429": {"description": "Rate limited (60/min)"},
+                },
+            },
+        },
+
         # ── Companies ─────────────────────────────────────────────────────
         "/api/v1/companies/": {
             "get": {
@@ -758,6 +843,7 @@ OPENAPI_SPEC = {
         {"name": "Events", "description": "SEC 8-K filing events with AI briefings"},
         {"name": "Watchlists", "description": "User-defined company watchlists"},
         {"name": "Companies", "description": "SEC-registered companies"},
+        {"name": "Share", "description": "Shareable \"Track on Sensybull\" links: public share info, idempotent add-by-ticker, funnel analytics"},
         {"name": "Watchlist", "description": "Watchlist inbox: per-company read state, unread counts, mute"},
     ],
 }

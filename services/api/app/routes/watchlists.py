@@ -3,11 +3,15 @@ from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from marshmallow import ValidationError
-from app import db
+from app import db, limiter
 from app.models.watchlist import Watchlist
 from app.models.company import Company
 from app.models.company_read_state import CompanyReadState
+from app.services.share_analytics import record_share_event
 from app.utils.schemas import WatchlistSchema, WatchlistCreateSchema
+from app.utils.tickers import normalize_symbol
+
+DEFAULT_WATCHLIST_NAME = 'My Watchlist'
 
 watchlists_bp = Blueprint('watchlists', __name__)
 watchlist_schema = WatchlistSchema()
@@ -95,6 +99,66 @@ def delete_watchlist(watchlist_id):
     except Exception:
         db.session.rollback()
         return jsonify({'error': 'Failed to delete watchlist'}), 500
+
+
+@watchlists_bp.route('/track', methods=['POST'])
+@jwt_required()
+@limiter.limit('30 per minute')
+def track_company():
+    """Idempotent one-call "track this ticker" for shared /add/<symbol> links.
+
+    Validates the ticker, resolves the company, adds it to the user's default
+    watchlist (their first list, created on demand — mirroring the frontend's
+    default-watchlist behavior), and reports whether it was newly added.
+    Re-posting the same symbol is always success, never a duplicate.
+    """
+    user_id = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+
+    symbol = normalize_symbol(data.get('symbol'))
+    if not symbol:
+        return jsonify({'error': 'invalid_symbol'}), 400
+
+    company = Company.query.filter(Company.ticker.ilike(symbol)).first()
+    if not company:
+        return jsonify({'error': 'unknown_ticker'}), 404
+
+    watchlist = (Watchlist.query.filter_by(user_id=user_id)
+                 .order_by(Watchlist.created_at).first())
+    if watchlist is None:
+        watchlist = Watchlist(user_id=user_id, name=DEFAULT_WATCHLIST_NAME)
+        db.session.add(watchlist)
+
+    already_tracking = company in watchlist.companies
+    if not already_tracking:
+        watchlist.companies.append(company)
+        # Fresh adds start with no unread backlog; never resets existing state.
+        CompanyReadState.ensure(
+            db.session, user_id, company.id,
+            last_read_at=datetime.now(timezone.utc))
+
+    # Funnel analytics (best-effort) — the API is authoritative for these two
+    # steps; the client only reports the pre-add steps.
+    record_share_event(
+        'already_in_watchlist' if already_tracking else 'watchlist_added',
+        symbol=symbol,
+        attribution=data.get('attribution') if isinstance(data.get('attribution'), dict) else {},
+        referrer=data.get('referrer'),
+        user_id=user_id,
+        logged_in=True,
+    )
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to track company'}), 500
+
+    return jsonify({
+        'status': 'already_tracking' if already_tracking else 'added',
+        'company': {'id': company.id, 'name': company.name, 'ticker': company.ticker},
+        'watchlist_id': watchlist.id,
+    })
 
 
 @watchlists_bp.route('/<watchlist_id>/companies', methods=['POST'])
