@@ -310,6 +310,99 @@ class TestAnalystEndpoint:
         assert resp.status_code == 403
 
 
+class TestModelFallback:
+    """The model chain must degrade on ANY provider error (a decommissioned
+    model returns 400, not 404/429 — this is what took the analyst and
+    drafting assistant down in production)."""
+
+    @staticmethod
+    def _fake_groq_module(create_fn):
+        import types
+        from types import SimpleNamespace
+
+        class FakeGroq:
+            def __init__(self, api_key):
+                self.chat = SimpleNamespace(
+                    completions=SimpleNamespace(create=create_fn))
+
+        mod = types.ModuleType("groq")
+        mod.Groq = FakeGroq
+        return mod
+
+    @pytest.fixture(autouse=True)
+    def _groq_key(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "test-key")
+        monkeypatch.setattr(llm, "_key_cycle", None)
+        yield
+        monkeypatch.setattr(llm, "_key_cycle", None)
+
+    def test_chat_json_falls_back_on_generic_error(self):
+        import sys
+        from types import SimpleNamespace
+
+        def create(model, **kwargs):
+            if model == "decommissioned-model":
+                exc = Exception("model_decommissioned")
+                exc.status_code = 400
+                raise exc
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content='{"ok": 1}'))])
+
+        with patch.dict(sys.modules, {"groq": self._fake_groq_module(create)}):
+            result = llm._chat_json(
+                ["decommissioned-model", "working-model"],
+                [{"role": "user", "content": "x"}], max_tokens=10)
+        assert result == ({"ok": 1}, "working-model")
+
+    def test_chat_json_none_only_after_whole_chain_fails(self):
+        import sys
+
+        def create(model, **kwargs):
+            raise Exception("boom")
+
+        with patch.dict(sys.modules, {"groq": self._fake_groq_module(create)}):
+            result = llm._chat_json(
+                ["a", "b"], [{"role": "user", "content": "x"}], max_tokens=10)
+        assert result is None
+
+    def test_analyst_final_round_omits_tool_params(self):
+        from types import SimpleNamespace
+        from app.services.thesis import analyst
+
+        captured = {}
+
+        def create(model, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content="answer", tool_calls=None))])
+
+        client = SimpleNamespace(chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create)))
+        with patch.object(analyst, "MAX_ROUNDS", 0):
+            result = analyst._loop(client, "m", None,
+                                   [{"role": "user", "content": "hi"}])
+        assert result["reply"] == "answer"
+        assert "tools" not in captured and "tool_choice" not in captured
+
+    def test_analyst_tool_rounds_pass_tools(self):
+        from types import SimpleNamespace
+        from app.services.thesis import analyst
+
+        calls = []
+
+        def create(model, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content="answer", tool_calls=None))])
+
+        client = SimpleNamespace(chat=SimpleNamespace(
+            completions=SimpleNamespace(create=create)))
+        result = analyst._loop(client, "m", None,
+                               [{"role": "user", "content": "hi"}])
+        assert result["reply"] == "answer"
+        assert calls[0]["tools"] and calls[0]["tool_choice"] == "auto"
+
+
 class TestLlmValidation:
     """Pure unit tests over the deep-pass output cleaning."""
 

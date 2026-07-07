@@ -38,8 +38,12 @@ _MODEL_CHAIN = [
 
 
 def _deep_model_chain() -> list[str]:
-    """Deep-pass model, overridable per deploy; triage chain as last resort."""
-    primary = os.environ.get("THESIS_DEEP_MODEL", "llama-3.3-70b-versatile")
+    """Deep-pass model, overridable per deploy; triage chain as last resort.
+
+    Default is Groq's recommended replacement after llama-3.3-70b-versatile
+    was deprecated (June 2026).
+    """
+    primary = os.environ.get("THESIS_DEEP_MODEL", "openai/gpt-oss-120b")
     return [primary, *_MODEL_CHAIN]
 
 
@@ -186,11 +190,12 @@ def _chat_json(model_chain: list[str], messages: list[dict],
             )
             return json.loads(resp.choices[0].message.content), model
         except Exception as exc:  # noqa: BLE001 — never propagate
-            status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-            # Rate limits and unknown-model errors both warrant trying the
-            # next model in the chain rather than giving up.
-            if model != model_chain[-1] and status in (404, 429):
-                log.warning("thesis.llm: %s on %s, falling back", status, model)
+            # Any failure — rate limit, decommissioned/unknown model, bad
+            # params, malformed JSON — warrants trying the next model in the
+            # chain rather than giving up. Only the last model's failure
+            # surfaces as None.
+            if model != model_chain[-1]:
+                log.warning("thesis.llm: %s failed (%s), falling back", model, exc)
                 continue
             log.warning("thesis.llm: call failed on %s: %s", model, exc)
             return None
