@@ -59,6 +59,28 @@ def db_session(app):
         _db.drop_all()
 
 
+@pytest.fixture(autouse=True)
+def drain_background_executors(db_session):
+    """Drain the thesis-engine and alert-dispatcher thread pools between tests.
+
+    Tests that exercise the subscriber enqueue real background tasks. Without
+    a drain, a worker thread (or its lingering scoped session) can straddle
+    this test's drop_all — SQLite reports "database table is locked" and the
+    half-dropped schema poisons every test after it. Depending on db_session
+    puts this teardown BEFORE drop_all. Engine first: its tasks enqueue
+    dispatcher tasks.
+    """
+    yield
+    from concurrent.futures import ThreadPoolExecutor
+    from app.services.thesis import engine
+    from app.services.alerts import dispatcher
+
+    engine._executor.shutdown(wait=True)
+    engine._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="thesis")
+    dispatcher._executor.shutdown(wait=True)
+    dispatcher._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="alerts")
+
+
 @pytest.fixture
 def client(app):
     """Flask test client."""

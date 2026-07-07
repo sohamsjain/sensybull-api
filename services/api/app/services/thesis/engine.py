@@ -99,6 +99,12 @@ def _with_app_context(app, fn, *args) -> None:
         log.exception("thesis.engine: unhandled error in %s", fn.__name__)
     finally:
         if ctx is not None:
+            # Executor threads are long-lived: release the thread-local
+            # session (and its connection/open transaction) after each task,
+            # or it lingers until the thread's next task. Only when we pushed
+            # the context — inline callers keep their own session.
+            from app import db
+            db.session.remove()
             ctx.pop()
 
 
