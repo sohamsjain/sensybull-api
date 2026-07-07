@@ -281,9 +281,11 @@ def run_analyst(position, messages: list) -> dict | None:
         try:
             return _loop(client, model, position, list(convo))
         except Exception as exc:  # noqa: BLE001 — try the next model
-            status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-            if model != model_chain[-1] and status in (404, 429):
-                log.warning("thesis.analyst: %s on %s, falling back", status, model)
+            # Any failure (rate limit, decommissioned model, tool-use quirks)
+            # warrants the next model in the chain; only the last one's
+            # failure surfaces as None.
+            if model != model_chain[-1]:
+                log.warning("thesis.analyst: %s failed (%s), falling back", model, exc)
                 continue
             log.warning("thesis.analyst: failed on %s: %s", model, exc)
             return None
@@ -293,14 +295,19 @@ def run_analyst(position, messages: list) -> dict | None:
 def _loop(client, model: str, position, convo: list[dict]) -> dict:
     tools_used: list[str] = []
     for round_no in range(MAX_ROUNDS + 1):
-        # On the last round, withhold tools so the model must answer.
-        allow_tools = round_no < MAX_ROUNDS
+        # On the last round, withhold tools so the model must answer. The
+        # tool params are omitted entirely (not passed as None — the SDK
+        # would serialize that as JSON null and the API may reject it).
+        tool_kwargs = (
+            {"tools": _TOOLS, "tool_choice": "auto"}
+            if round_no < MAX_ROUNDS
+            else {}
+        )
         resp = client.chat.completions.create(
             model=model,
             max_tokens=1200,
             messages=convo,
-            tools=_TOOLS if allow_tools else None,
-            tool_choice="auto" if allow_tools else None,
+            **tool_kwargs,
         )
         msg = resp.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None) or []
