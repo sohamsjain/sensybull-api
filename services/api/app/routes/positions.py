@@ -246,6 +246,11 @@ def draft_thesis():
     draft = llm.draft_thesis(data["raw_text"], company_name=company_name,
                              ticker=ticker, direction=data["direction"])
     if draft is None:
+        # Distinguish "server has no AI keys" from a transient model outage —
+        # the former is an ops problem the message should name.
+        if not llm.is_configured():
+            return jsonify({"error": "AI is not configured on this server "
+                                     "(GROQ_API_KEYS is unset)"}), 503
         return jsonify({"error": "Thesis drafting is unavailable"}), 503
     draft.pop("model", None)
     return jsonify({"draft": draft})
@@ -320,9 +325,12 @@ def position_analyst(position_id):
     if data["messages"][-1]["role"] != "user":
         return jsonify({"error": "Last message must be from the user"}), 400
 
-    from app.services.thesis import analyst
+    from app.services.thesis import analyst, llm
     result = analyst.run_analyst(position, data["messages"])
     if result is None or not result.get("reply"):
+        if not llm.is_configured():
+            return jsonify({"error": "AI is not configured on this server "
+                                     "(GROQ_API_KEYS is unset)"}), 503
         return jsonify({"error": "The analyst is unavailable"}), 503
     return jsonify({"reply": result["reply"], "tools_used": result["tools_used"]})
 

@@ -57,6 +57,13 @@ services:
         sync: false
       - key: ALPACA_FEED
         value: iex
+      # Thesis engine, drafting assistant, and per-position analyst all call
+      # Groq from the API service — without keys they self-disable and the
+      # AI endpoints return 503. Use the same keys as sensybull-ingest.
+      - key: GROQ_API_KEYS
+        sync: false  # comma-separated Groq keys
+      - key: THESIS_DEEP_MODEL
+        value: openai/gpt-oss-120b
 
   # ── Ingest service ────────────────────────────────────────────────────
   - type: worker

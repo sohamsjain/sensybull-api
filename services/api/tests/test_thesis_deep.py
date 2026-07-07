@@ -214,10 +214,21 @@ class TestDraftThesis:
         assert m.call_args.kwargs["ticker"] == "AAPL"
 
     def test_503_when_unavailable(self, client, auth_headers):
+        with patch("app.services.thesis.llm.draft_thesis", return_value=None), \
+             patch("app.services.thesis.llm.is_configured", return_value=True):
+            resp = client.post("/api/v1/positions/draft-thesis", headers=auth_headers,
+                               json={"raw_text": "notes"})
+        assert resp.status_code == 503
+        assert resp.get_json()["error"] == "Thesis drafting is unavailable"
+
+    def test_503_names_missing_keys_when_unconfigured(self, client, auth_headers):
+        # No Groq keys on the server (the test env has none) — the error
+        # must name the ops problem, not shrug.
         with patch("app.services.thesis.llm.draft_thesis", return_value=None):
             resp = client.post("/api/v1/positions/draft-thesis", headers=auth_headers,
                                json={"raw_text": "notes"})
         assert resp.status_code == 503
+        assert "not configured" in resp.get_json()["error"]
 
     def test_validation(self, client, auth_headers):
         resp = client.post("/api/v1/positions/draft-thesis", headers=auth_headers, json={})

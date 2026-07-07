@@ -188,4 +188,14 @@ def create_app(config_class=Config):
         from app.services.market_data.reaction_worker import start_reaction_worker
         start_reaction_worker(app, socketio)
 
+    # The AI features degrade silently without Groq keys — say so once at
+    # boot so a misconfigured deploy is visible in the logs, not just as
+    # 503s from the drafting/analyst endpoints.
+    from app.services.thesis import llm as thesis_llm
+    if not thesis_llm.is_configured():
+        app.logger.warning(
+            "GROQ_API_KEYS/GROQ_API_KEY not set — thesis assessments, "
+            "thesis drafting, and the analyst are disabled on this instance"
+        )
+
     return app
