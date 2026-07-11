@@ -222,4 +222,5 @@ def build_form4_briefing(f4: Form4, value: float, window_buys: list[dict]) -> Br
         investor_takeaway=takeaway,
         catalysts=[],
         event_types=["Insider Buying"],
+        mode="structured",
     )
