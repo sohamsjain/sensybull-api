@@ -52,11 +52,10 @@ def _next_api_key() -> str:
 
 _ITEM_TEXT_CAP = 6_000
 _EXHIBIT_TEXT_CAP = 8_000
-_DOCUMENT_TEXT_CAP = 12_000
 _TOTAL_TEXT_CAP = 24_000
 
 # The LLM is only called when at least this much substantive filing text
-# (item bodies + document excerpt + exhibit bodies) exists to ground on.
+# (item bodies + exhibit bodies) exists to ground on.
 # Below this, there is nothing to summarize — a model asked anyway will
 # fabricate a plausible-sounding story (observed in production on
 # exhibit-only 8-K/A amendments).
@@ -68,44 +67,21 @@ _MODEL_CHAIN = [
     "llama-3.1-8b-instant",
 ]
 
-# Canonical event types for classification.
-# The LLM picks 1-3 from this list (or "Other" as fallback).
+# Canonical event types for classification — deliberately a SMALL list of
+# highly material categories (July 2026: the long multi-form taxonomy was
+# rolled back along with non-8-K ingestion). The LLM picks 1-3 from this
+# list (or "Other" as fallback).
 EVENT_TYPES = [
-    "M&A / Merger",
     "Acquisition",
-    "Divestiture",
-    "Activist Proxy",
-    "Activist Initial",
-    "Strategic Review",
-    "Tender Offer",
-    "Issuer Tender",
-    "Going-Private",
-    "Going Dark",
-    "Spin-Off",
-    "Capital Return",
-    "Rights Issue",
-    "Restructuring",
-    "Insolvency",
-    "Liquidation",
-    "Delisting",
-    "Busted M&A",
-    "Litigation",
-    "Domicile Change",
-    "Earnings",
-    "Leadership Change",
-    "Debt / Financing",
-    "Impairment",
-    "Restatement",
-    "Regulatory Action",
-    "Cybersecurity Incident",
     "Material Agreement",
-    "Dividend Change",
+    "Earnings",
     "Bankruptcy",
-    "Shelf Registration",
-    "Share Offering",
-    "Stock Split",
-    "Insider Buying",
-    "Late Filing",
+    "Debt / Financing",
+    "Restructuring",
+    "Leadership Change",
+    "Delisting",
+    "Restatement",
+    "Cybersecurity Incident",
     "Other",
 ]
 # NOTE: this list is mirrored in services/api/app/routes/events.py — keep in sync.
@@ -113,16 +89,17 @@ EVENT_TYPES = [
 _EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
 
 # Deterministic 8-K item → event type mapping for facts-only briefings.
-# Only unambiguous items are mapped; everything else stays with the form's
-# default. Labels must exist in EVENT_TYPES.
+# Only unambiguous items are mapped; everything else falls back to "Other".
+# Labels must exist in EVENT_TYPES.
 _ITEM_EVENT_TYPES: dict[str, str] = {
     "1.01": "Material Agreement",
     "1.02": "Material Agreement",
     "1.03": "Bankruptcy",
+    "1.05": "Cybersecurity Incident",
+    "2.01": "Acquisition",
     "2.02": "Earnings",
     "2.03": "Debt / Financing",
     "2.05": "Restructuring",
-    "2.06": "Impairment",
     "3.01": "Delisting",
     "4.02": "Restatement",
     "5.02": "Leadership Change",
@@ -136,7 +113,7 @@ Your job is to interpret filings the way an event-driven investor would —
 identify the deal, the parties, the economics, and the status — using
 ONLY what the filing text says.
 
-Given a {{form_name}} filing{{category_note}}, produce a JSON object with these fields:
+Given a {{form_name}} filing, produce a JSON object with these fields:
 
 1. "headline" — one short, plain-English sentence (max 100 chars) that an
    everyday reader would understand at a glance. Write it the way a person
@@ -231,14 +208,12 @@ def _system_prompt(spec: FormSpec | None) -> str:
     format() would choke on.
     """
     form_name = spec.form if spec else "8-K"
-    category_note = f" ({spec.category})" if spec and spec.category else ""
     guidance = ""
     if spec and spec.llm_hint:
         guidance = f"\nFORM-SPECIFIC GUIDANCE ({form_name}):\n{spec.llm_hint}\n"
     return (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("{form_name}", form_name)
-        .replace("{category_note}", category_note)
         .replace("{form_guidance}", guidance)
     )
 
@@ -256,8 +231,6 @@ def _build_user_message(filing: Filing, exhibit_plain: dict[str, str]) -> str:
         parts.append(f"Ticker: {filing.ticker}")
     if filing.form_type and filing.form_type != "8-K":
         parts.append(f"Form: {filing.form_type}")
-    if filing.filed_by:
-        parts.append(f"Filed by: {filing.filed_by}")
     parts.append(f"Filed: {filing.updated}")
     parts.append("")
 
@@ -265,12 +238,6 @@ def _build_user_message(filing: Filing, exhibit_plain: dict[str, str]) -> str:
     for item in filing.items:
         parts.append(f"--- Item {item.number}: {item.title} ({item.category}) ---")
         parts.append(_truncate(item.text, _ITEM_TEXT_CAP))
-        parts.append("")
-
-    # Document excerpt (forms without item structure: proxies, tenders, NT…)
-    if filing.document_excerpt:
-        parts.append(f"--- Filing Document ({filing.form_type}) ---")
-        parts.append(_truncate(filing.document_excerpt, _DOCUMENT_TEXT_CAP))
         parts.append("")
 
     # Exhibit index — titles from the EDGAR filing index are facts and often
@@ -352,14 +319,12 @@ def facts_only_briefing(filing: Filing, spec: FormSpec | None) -> Briefing:
     here is mechanical — form type, item categories from the 8-K item
     number registry, tier-derived significance.
     """
-    fallback_type = spec.default_event_type if spec else "Other"
-
     mapped = []
     for it in filing.items:
         t = _ITEM_EVENT_TYPES.get(it.number)
         if t and t not in mapped:
             mapped.append(t)
-    event_types = mapped[:3] or [fallback_type]
+    event_types = mapped[:3] or ["Other"]
 
     categories = []
     for it in filing.items:
@@ -368,15 +333,10 @@ def facts_only_briefing(filing: Filing, spec: FormSpec | None) -> Briefing:
             categories.append(label)
     if categories:
         headline = f"{filing.form_type} filed: {', '.join(categories)}"
-    elif spec and spec.category:
-        headline = f"{filing.form_type} filed: {spec.category}"
     else:
         headline = f"{filing.form_type} filed — see filing for details"
 
-    if filing.items:
-        tier = min(it.tier for it in filing.items)
-    else:
-        tier = spec.tier if spec else 3
+    tier = min((it.tier for it in filing.items), default=3)
     significance = _TIER_SIGNIFICANCE.get(tier, "Medium")
 
     return Briefing(
@@ -437,7 +397,6 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
     # ── Gate: refuse to ask a model about text that isn't there ─────────
     substantive = "\n".join(
         [it.text for it in filing.items]
-        + [filing.document_excerpt]
         + list(exhibit_plain.values())
     ).strip()
     if len(substantive) < _MIN_SOURCE_CHARS:
@@ -508,7 +467,7 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
     # ── Deterministic grounding: verify against the text the model saw ──
     corpus = grounding.build_corpus(user_msg)
     allowed_names = tuple(
-        n for n in (filing.title, filing.ticker, filing.filed_by, filing.form_type)
+        n for n in (filing.title, filing.ticker, filing.form_type)
         if n
     )
 

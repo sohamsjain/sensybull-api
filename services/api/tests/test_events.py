@@ -144,8 +144,9 @@ class TestGetEventTypes:
         assert resp.status_code == 200
         types = resp.get_json()["event_types"]
         assert "Acquisition" in types
-        assert "M&A / Merger" in types
-        assert len(types) > 30
+        assert "Other" in types
+        # Deliberately a small list of highly material categories
+        assert len(types) <= 12
 
 
 class TestGetEventDetail:
