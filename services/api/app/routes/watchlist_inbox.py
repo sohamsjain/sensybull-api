@@ -39,7 +39,8 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
-# Human-readable fallback labels for non-8-K form types
+# Human-readable fallback labels. Only the 8-K family is ingested since the
+# July 2026 rollback; the other entries keep HISTORICAL events readable.
 _FORM_LABELS = {
     '8-K': 'an 8-K',
     '4': 'a Form 4 insider transaction',

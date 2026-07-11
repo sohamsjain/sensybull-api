@@ -62,9 +62,7 @@ def fetch_feed(type_param: str = "8-K", count: int = 40, start: int = 0) -> ET.E
     return ET.fromstring(fetch_url(url))
 
 
-# Company-role suffix on getcurrent titles, e.g. "(0001234567) (Subject)".
-# Ownership/tender filings appear once per associated company with the role
-# distinguishing the tradable subject/issuer from the filer.
+# Company-role suffix on getcurrent titles, e.g. "(0001234567) (Filer)".
 _ROLE_SUFFIX = re.compile(
     r"\((\d{7,10})\)\s*\((Filer|Subject|Filed by|Reporting|Issuer)\)\s*$",
     re.IGNORECASE,
@@ -99,9 +97,6 @@ def parse_feed_entries(root: ET.Element) -> list[dict]:
         if not form_type and " - " in raw_title:
             form_type = raw_title.split(" - ", 1)[0].strip()
 
-        role_m = _ROLE_SUFFIX.search(raw_title)
-        role = role_m.group(2).title() if role_m else ""
-
         cik = ""
         parts = url.split("/")
         for i, part in enumerate(parts):
@@ -116,7 +111,6 @@ def parse_feed_entries(root: ET.Element) -> list[dict]:
             "url": url,
             "cik": cik,
             "form_type": form_type,
-            "role": role,
         })
     return entries
 
@@ -174,59 +168,23 @@ def _parse_index_documents(index_html: str) -> list[dict]:
     return docs
 
 
-# EDGAR index-page header: one companyName block per associated company,
-# tagged with its role. This is where the tradable SUBJECT company of an
-# ownership/tender filing lives (the feed entry may carry the filer's CIK).
-_COMPANY_BLOCK = re.compile(
-    r'class="companyName"[^>]*>(.*?)</span>', re.DOTALL | re.IGNORECASE)
-_BLOCK_ROLE = re.compile(r"\((Subject|Filed by|Filer|Reporting|Issuer)\)", re.IGNORECASE)
-_BLOCK_CIK = re.compile(r"CIK=(\d{4,10})", re.IGNORECASE)
-
-
-def parse_index_header(index_html: str) -> dict:
-    """Extract subject/filed-by companies from a filing index page header.
-
-    Returns {"subject": {"cik", "name"} | None, "filed_by": {...} | None}.
-    Subject/Issuer roles map to "subject"; Filed by/Reporting/Filer to
-    "filed_by". Missing header (normal for 8-Ks) yields both None.
-    """
-    result = {"subject": None, "filed_by": None}
-    for block in _COMPANY_BLOCK.finditer(index_html):
-        text = block.group(1)
-        role_m = _BLOCK_ROLE.search(text)
-        cik_m = _BLOCK_CIK.search(text)
-        if not role_m or not cik_m:
-            continue
-        name = _strip_tags(text[:role_m.start()]).strip(" -–")
-        info = {"cik": cik_m.group(1).zfill(10), "name": name}
-        role = role_m.group(1).lower()
-        if role in ("subject", "issuer") and result["subject"] is None:
-            result["subject"] = info
-        elif role in ("filed by", "reporting", "filer") and result["filed_by"] is None:
-            result["filed_by"] = info
-    return result
-
-
 def _is_primary_type(t: str, form_type: str) -> bool:
     t = t.upper().strip()
     form = form_type.upper()
     return t.startswith(form) or t == f"FORM {form}"
 
 
-def fetch_filing_detail(index_url: str, form_type: str = "8-K",
-                        want_header: bool = False) -> dict:
+def fetch_filing_detail(index_url: str, form_type: str = "8-K") -> dict:
     """Fetch filing index page and the primary document HTML.
 
     Returns:
         {
             "primary_html": str,        # raw HTML of the primary document
             "exhibits":     list[dict], # [{type, description, url}, ...]
-            "subject":      dict | None,  # {"cik", "name"} when want_header
-            "filed_by":     dict | None,
         }
     primary_html is an empty string on any failure; exhibits may be empty.
     """
-    empty = {"primary_html": "", "exhibits": [], "subject": None, "filed_by": None}
+    empty = {"primary_html": "", "exhibits": []}
     if not index_url:
         return empty
 
@@ -237,7 +195,6 @@ def fetch_filing_detail(index_url: str, form_type: str = "8-K",
 
     docs     = _parse_index_documents(index_html)
     exhibits = [d for d in docs if d["type"].upper().startswith("EX-")]
-    header   = parse_index_header(index_html) if want_header else {"subject": None, "filed_by": None}
 
     # Primary document: prefer an explicit form-type match; fall back to the
     # first non-exhibit HTML document in the index (handles edge cases where
@@ -261,33 +218,7 @@ def fetch_filing_detail(index_url: str, form_type: str = "8-K",
         except Exception:
             pass
 
-    return {"primary_html": primary_html, "exhibits": exhibits,
-            "subject": header["subject"], "filed_by": header["filed_by"]}
-
-
-def fetch_form4_xml(index_url: str) -> str:
-    """Fetch the structured XML document of a Form 4 filing ("" on failure)."""
-    if not index_url:
-        return ""
-    try:
-        index_html = fetch_url(index_url).decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-
-    docs = _parse_index_documents(index_html)
-    xml_url = next(
-        (d["url"] for d in docs
-         if d["url"].lower().endswith(".xml")
-         and not d["type"].upper().startswith("EX-")),
-        "",
-    )
-    if not xml_url:
-        return ""
-    time.sleep(0.1)  # SEC fair-access politeness
-    try:
-        return fetch_url(xml_url).decode("utf-8", errors="replace")
-    except Exception:
-        return ""
+    return {"primary_html": primary_html, "exhibits": exhibits}
 
 
 # ---------------------------------------------------------------------------

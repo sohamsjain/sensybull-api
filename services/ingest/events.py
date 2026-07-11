@@ -36,8 +36,8 @@ class FilingEventBriefing:
     investor_takeaway: str           # 1-sentence "so what"
     catalysts: list[dict[str, str]] = field(default_factory=list)
     deal_terms: dict[str, str] = field(default_factory=dict)
-    # Provenance: "llm_verified" | "facts_only" | "structured" — how the
-    # narrative was produced and what guarantees it carries (see
+    # Provenance: "llm_verified" | "facts_only" — how the narrative was
+    # produced and what guarantees it carries (see
     # services/ingest/briefing.py). facts_only means no LLM-authored text.
     mode: str = "llm_verified"
 
@@ -47,7 +47,7 @@ class FilingEvent:
     """Top-level event published to Redis channel `filing:new`."""
     # Ingest-side identifiers
     edgar_id: str            # EDGAR Atom entry ID — global dedup key
-    signal_type: str         # EDGAR form type: "8-K", "SC 13D", "SC TO-T", "4", ...
+    signal_type: str         # EDGAR form type: "8-K" or "8-K/A"
 
     # Company identity
     cik: str
@@ -67,10 +67,6 @@ class FilingEvent:
 
     # LLM-classified event types (e.g. ["Acquisition", "Debt / Financing"])
     event_types: list[str] = field(default_factory=list)
-
-    # Filer name when it differs from the subject company (13D reporting
-    # person, tender bidder, proxy dissident). Empty for self-filed forms.
-    filed_by: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)

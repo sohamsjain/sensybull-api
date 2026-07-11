@@ -109,16 +109,13 @@ def get_public_event(event_id):
 
 
 # Mirrors services/ingest/briefing.py EVENT_TYPES — keep the two in sync.
+# Deliberately a small list of highly material categories (July 2026
+# rollback: 8-K is the only ingested form; the long taxonomy went with the
+# other forms).
 EVENT_TYPES = [
-    "M&A / Merger", "Acquisition", "Divestiture", "Activist Proxy",
-    "Activist Initial", "Strategic Review", "Tender Offer", "Issuer Tender",
-    "Going-Private", "Going Dark", "Spin-Off", "Capital Return", "Rights Issue",
-    "Restructuring", "Insolvency", "Liquidation", "Delisting", "Busted M&A",
-    "Litigation", "Domicile Change", "Earnings", "Leadership Change",
-    "Debt / Financing", "Impairment", "Restatement", "Regulatory Action",
-    "Cybersecurity Incident", "Material Agreement", "Dividend Change",
-    "Bankruptcy", "Shelf Registration", "Share Offering", "Stock Split",
-    "Insider Buying", "Late Filing", "Other",
+    "Acquisition", "Material Agreement", "Earnings", "Bankruptcy",
+    "Debt / Financing", "Restructuring", "Leadership Change", "Delisting",
+    "Restatement", "Cybersecurity Incident", "Other",
 ]
 
 

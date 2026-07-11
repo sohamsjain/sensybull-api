@@ -1,10 +1,9 @@
 """
-main.py — multi-form SEC ingest pipeline.
+main.py — SEC 8-K ingest pipeline.
 
-Polls SEC EDGAR for new filings across the event-driven form types in
-forms.FORM_REGISTRY (8-K, SC 13D, tenders, merger/contested proxies,
-delistings, NT late-filings, Form 4 insider buys, ...), extracts content
-per form strategy, generates LLM briefings, and publishes events to Redis.
+Polls SEC EDGAR for new 8-K filings (the only ingested form family after
+the July 2026 multi-form rollback), extracts Item sections, generates LLM
+briefings, and publishes events to Redis.
 """
 
 import asyncio
@@ -20,19 +19,10 @@ from fetcher import (
     fetch_exhibit_text,
     fetch_feed,
     fetch_filing_detail,
-    fetch_form4_xml,
     load_ticker_map,
     parse_feed_entries,
 )
-from forms import FormSpec, active_feed_queries, enabled_forms, get_spec
-from form4 import (
-    CLUSTER_MIN_INSIDERS,
-    MIN_BUY_USD,
-    build_form4_briefing,
-    parse_form4_xml,
-    qualifying_buy_value,
-)
-from form4_state import load_buys, record_buy, save_buys
+from forms import FEED_QUERIES, FORM_REGISTRY
 from parser import build_filing
 from publisher import publish_filing
 from seen import load_seen, save_seen
@@ -72,14 +62,12 @@ def _briefing_payload(briefing) -> FilingEventBriefing | None:
     )
 
 
-async def _process_document_entry(entry: dict, spec: FormSpec,
-                                  ticker_map: dict, loop) -> None:
-    """8-K / ownership / document strategies: fetch → parse → LLM → publish."""
-    want_header = spec.subject_from == "feed_subject"
+async def _process_entry(entry: dict, ticker_map: dict, loop) -> None:
+    """8-K pipeline: fetch → parse items → LLM briefing → publish."""
     detail = await loop.run_in_executor(
-        None, fetch_filing_detail, entry["url"], spec.form, want_header
+        None, fetch_filing_detail, entry["url"], entry["form_type"]
     )
-    filing = build_filing(entry, detail, ticker_map, spec)
+    filing = build_filing(entry, detail, ticker_map)
 
     fetchable = [
         ex for ex in detail.get("exhibits", [])
@@ -95,10 +83,7 @@ async def _process_document_entry(entry: dict, spec: FormSpec,
         None, generate_briefing, filing, exhibit_texts
     )
 
-    if spec.strategy == "8k_items":
-        max_tier = min((it.tier for it in filing.items), default=3)
-    else:
-        max_tier = spec.tier
+    max_tier = min((it.tier for it in filing.items), default=3)
 
     event = FilingEvent(
         edgar_id=entry["id"],
@@ -123,65 +108,10 @@ async def _process_document_entry(entry: dict, spec: FormSpec,
         ],
         briefing=_briefing_payload(filing.briefing),
         event_types=filing.briefing.event_types if filing.briefing else ["Other"],
-        filed_by=filing.filed_by,
     )
     publish_filing(event.to_json())
     log.info("Published: [%s] %s  ticker=%s  tier=%d",
              entry["form_type"], filing.title, filing.ticker or "—", max_tier)
-
-
-async def _process_form4_entry(entry: dict, ticker_map: dict, loop,
-                               form4_state: dict) -> bool:
-    """Form 4: XML parse → qualify → cluster check → publish. No LLM.
-
-    Returns True if an event was published (most Form 4s are noise and
-    return False after being marked seen by the caller).
-    """
-    xml_text = await loop.run_in_executor(None, fetch_form4_xml, entry["url"])
-    f4 = parse_form4_xml(xml_text)
-    if f4 is None:
-        return False
-
-    value = qualifying_buy_value(f4, MIN_BUY_USD)
-    if not value:
-        return False
-
-    accession = _accession_from_url(entry["url"])
-    window_buys = record_buy(form4_state, f4.issuer_cik, {
-        "owner_cik": f4.owner_cik,
-        "owner_name": f4.owner_name,
-        "value": value,
-        "date": entry["updated"],
-        "accession": accession,
-    })
-    save_buys(form4_state)
-
-    distinct_owners = {b["owner_cik"] for b in window_buys}
-    max_tier = 1 if len(distinct_owners) >= CLUSTER_MIN_INSIDERS else 2
-
-    briefing = build_form4_briefing(f4, value, window_buys)
-    ticker = f4.issuer_ticker or ticker_map.get(f4.issuer_cik, {}).get("ticker", "")
-
-    event = FilingEvent(
-        edgar_id=entry["id"],
-        signal_type="4",
-        cik=f4.issuer_cik,
-        ticker=ticker,
-        company_name=f4.issuer_name or entry["title"],
-        filing_date=entry["updated"],
-        edgar_url=entry["url"],
-        accession_number=accession,
-        max_tier=max_tier,
-        items=[],
-        exhibits=[],
-        briefing=_briefing_payload(briefing),
-        event_types=briefing.event_types,
-        filed_by=f4.owner_name,
-    )
-    publish_filing(event.to_json())
-    log.info("Published: [4] %s  %s  tier=%d", ticker or f4.issuer_name,
-             briefing.headline, max_tier)
-    return True
 
 
 async def poll_loop() -> None:
@@ -193,11 +123,8 @@ async def poll_loop() -> None:
     last_ticker_refresh = time.time()
 
     seen = load_seen()
-    form4_state = load_buys()
-    enabled = enabled_forms()
-    queries = active_feed_queries()
-    log.info("Seen set loaded (%d entries). %d forms enabled, %d feed queries. "
-             "Polling every %ds.", len(seen), len(enabled), len(queries), POLL_INTERVAL)
+    log.info("Seen set loaded (%d entries). Ingesting %s. Polling every %ds.",
+             len(seen), ", ".join(FORM_REGISTRY), POLL_INTERVAL)
 
     while True:
         if time.time() - last_ticker_refresh >= TICKER_REFRESH_INTERVAL:
@@ -210,7 +137,7 @@ async def poll_loop() -> None:
             else:
                 log.warning("Ticker map refresh returned empty — keeping stale copy")
 
-        for query in queries:
+        for query in FEED_QUERIES:
             try:
                 entries: list[dict] = []
                 for page in range(query.pages):
@@ -227,36 +154,18 @@ async def poll_loop() -> None:
                 published = 0
                 for entry in reversed(entries):  # oldest first
                     form_type = entry.get("form_type", "")
-                    spec = get_spec(form_type)
-                    if spec is None or form_type not in enabled:
-                        continue  # exact whitelist: amendments/prefix noise die here
-
-                    # Subject filings appear once per associated company
-                    # (subject + filer twins share an accession) — the
-                    # acc: key ensures exactly one event per filing. Subject
-                    # attribution comes from the index-page header inside
-                    # build_filing, so either twin is safe to process.
-                    accession = _accession_from_url(entry["url"])
-                    acc_key = f"acc:{accession}" if accession else ""
-                    if entry["id"] in seen or (acc_key and acc_key in seen):
+                    if form_type not in FORM_REGISTRY:
+                        continue  # exact whitelist: prefix noise dies here
+                    if entry["id"] in seen:
                         continue
 
                     try:
-                        if spec.strategy == "form4_xml":
-                            did_publish = await _process_form4_entry(
-                                entry, ticker_map, loop, form4_state)
-                        else:
-                            await _process_document_entry(entry, spec, ticker_map, loop)
-                            did_publish = True
-
+                        await _process_entry(entry, ticker_map, loop)
                         seen[entry["id"]] = entry["updated"]
-                        if acc_key:
-                            seen[acc_key] = entry["updated"]
-                        if did_publish:
-                            published += 1
-                            # Crash-safety: persist immediately after each
-                            # published event (LLM work is expensive to redo)
-                            save_seen(seen)
+                        published += 1
+                        # Crash-safety: persist immediately after each
+                        # published event (LLM work is expensive to redo)
+                        save_seen(seen)
                     except Exception as exc:
                         log.warning("Skipping %s: %s", entry.get("id", "?"), exc)
 

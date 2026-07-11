@@ -26,13 +26,20 @@ def _filing(**overrides):
 
 
 # Long enough to clear the minimum-source gate, with concrete grounded facts.
-_ACTIVIST_EXCERPT = (
-    "Activist Capital LP has acquired 2,150,000 shares, representing 8.2% of "
-    "the outstanding common stock of SmallCap Industries Inc. The reporting "
-    "person acquired the shares for aggregate consideration of $4,300,000 "
-    "and intends to engage with the board of directors regarding strategic "
-    "alternatives, including a possible sale of the company."
+_AGREEMENT_ITEM_TEXT = (
+    "On July 1, 2026, SmallCap Industries Inc. entered into a supply "
+    "agreement with Widget Partners LLC providing for the purchase of "
+    "2,150,000 units over five years for aggregate consideration of "
+    "$4,300,000. The agreement includes customary termination provisions "
+    "and is expected to support the Company's expansion plans."
 )
+
+
+def _item_filing(**overrides):
+    return _filing(items=[Item(
+        "1.01", "Entry into a Material Definitive Agreement",
+        _AGREEMENT_ITEM_TEXT, 2, "Contract",
+    )], **overrides)
 
 
 def _mock_groq(payload: dict):
@@ -63,33 +70,22 @@ class TestSystemPrompt:
         assert "AMENDMENT" in prompt
         assert "NEVER reconstruct or guess" in prompt
 
-    def test_13d_prompt_includes_hint_and_category(self):
-        prompt = _system_prompt(get_spec("SC 13D"))
-        assert "Given a SC 13D filing (Activist Stake)" in prompt
-        assert "FORM-SPECIFIC GUIDANCE (SC 13D)" in prompt
-        assert "Purpose of Transaction" in prompt
-
     def test_none_spec_falls_back_to_8k(self):
         assert "Given a 8-K filing" in _system_prompt(None)
 
-    def test_new_event_types_canonical(self):
-        assert "Insider Buying" in EVENT_TYPES
-        assert "Late Filing" in EVENT_TYPES
+    def test_event_types_are_the_narrow_material_list(self):
+        assert "Other" in EVENT_TYPES
+        assert len(EVENT_TYPES) <= 12
+        # Rolled-back multi-form categories must be gone
+        for gone in ("Insider Buying", "Tender Offer", "Activist Initial",
+                     "Going Dark", "Late Filing"):
+            assert gone not in EVENT_TYPES
 
 
 class TestUserMessage:
-    def test_includes_form_and_filed_by(self):
-        filing = _filing(form_type="SC 13D", filed_by="Activist Capital LP")
-        msg = _build_user_message(filing, {})
-        assert "Form: SC 13D" in msg
-        assert "Filed by: Activist Capital LP" in msg
-
-    def test_document_excerpt_block(self):
-        filing = _filing(form_type="PREM14A",
-                         document_excerpt="Merger at $12.50 per share.")
-        msg = _build_user_message(filing, {})
-        assert "--- Filing Document (PREM14A) ---" in msg
-        assert "$12.50 per share" in msg
+    def test_amendment_includes_form_line(self):
+        msg = _build_user_message(_filing(form_type="8-K/A"), {})
+        assert "Form: 8-K/A" in msg
 
     def test_exhibit_index_included(self):
         filing = _filing(form_type="8-K/A", exhibits=[
@@ -104,7 +100,6 @@ class TestUserMessage:
     def test_8k_message_unchanged(self):
         msg = _build_user_message(_filing(), {})
         assert "Form:" not in msg
-        assert "Filed by:" not in msg
         assert msg.startswith("Company: SmallCap Industries Inc.")
 
 
@@ -176,6 +171,11 @@ class TestFactsOnlyBriefing:
         b = facts_only_briefing(filing, get_spec("8-K"))
         assert b.event_types == ["Earnings", "Leadership Change"]
 
+    def test_item_mapping_stays_canonical(self):
+        from briefing import _ITEM_EVENT_TYPES
+        for number, label in _ITEM_EVENT_TYPES.items():
+            assert label in EVENT_TYPES, f"{number} maps to non-canonical {label!r}"
+
     def test_significance_from_tier(self):
         filing = _filing(form_type="8-K", items=[
             Item("1.03", "Bankruptcy", "", 1, "Bankruptcy"),
@@ -184,35 +184,36 @@ class TestFactsOnlyBriefing:
         assert b.significance == "High"
         assert b.primary_event_type == "Bankruptcy"
 
-    def test_form_default_type_when_no_items(self):
-        b = facts_only_briefing(_filing(form_type="SC 13D"), get_spec("SC 13D"))
-        assert b.event_types == ["Activist Initial"]
+    def test_no_items_falls_back_to_other(self):
+        b = facts_only_briefing(_filing(form_type="8-K"), get_spec("8-K"))
+        assert b.event_types == ["Other"]
+        assert b.headline == "8-K filed — see filing for details"
 
 
 class TestGenerateBriefing:
     def test_success_path(self):
-        filing = _filing(form_type="SC 13D", filed_by="Activist Capital LP",
-                         document_excerpt=_ACTIVIST_EXCERPT)
+        filing = _item_filing()
         client = _mock_groq({
-            "headline": "An activist investor takes an 8.2% stake and wants strategic changes",
-            "summary": "Activist Capital LP acquired 2,150,000 shares, an 8.2% "
-                       "stake, for $4,300,000 and will push for strategic alternatives.",
-            "primary_event_type": "Activist Initial",
-            "event_types": ["Activist Initial"],
-            "significance": "High",
+            "headline": "SmallCap signs a five-year supply deal worth $4,300,000",
+            "summary": "SmallCap Industries Inc. entered into a supply "
+                       "agreement with Widget Partners LLC for 2,150,000 "
+                       "units, worth $4,300,000 over five years.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
             "sentiment": "Positive",
-            "investor_takeaway": "Watch for a 13D/A.",
+            "investor_takeaway": "Supports the expansion plans.",
         })
         with patch.object(briefing_module, "Groq", return_value=client), \
              patch.object(briefing_module, "_llm_verify", return_value=True):
             result = generate_briefing(filing, {})
         assert result.mode == "llm_verified"
-        assert result.primary_event_type == "Activist Initial"
-        assert result.significance == "High"
-        assert "8.2%" in result.headline
-        # System prompt actually sent included the 13D guidance
+        assert result.primary_event_type == "Material Agreement"
+        assert result.significance == "Medium"
+        assert "$4,300,000" in result.headline
+        # System prompt actually sent included the 8-K guidance
         sent = client.chat.completions.create.call_args.kwargs["messages"]
-        assert "FORM-SPECIFIC GUIDANCE (SC 13D)" in sent[0]["content"]
+        assert "FORM-SPECIFIC GUIDANCE (8-K)" in sent[0]["content"]
 
     def test_hallucinated_narrative_rejected(self):
         """Regression: ESI 8-K/A — item text says 'refiling financials', LLM
@@ -235,8 +236,8 @@ class TestGenerateBriefing:
             "summary": "Element Solutions Inc has entered into a definitive "
                        "agreement to acquire Ecovative Design LLC, a leading "
                        "manufacturer of performance materials.",
-            "primary_event_type": "M&A / Merger",
-            "event_types": ["M&A / Merger", "Acquisition"],
+            "primary_event_type": "Acquisition",
+            "event_types": ["Acquisition"],
             "significance": "High",
             "sentiment": "Positive",
             "investor_takeaway": "Deal expected to be accretive.",
@@ -253,14 +254,14 @@ class TestGenerateBriefing:
         assert result.deal_terms == {}
 
     def test_fabricated_deal_terms_and_catalysts_dropped(self):
-        filing = _filing(form_type="SC 13D", filed_by="Activist Capital LP",
-                         document_excerpt=_ACTIVIST_EXCERPT)
+        filing = _item_filing()
         client = _mock_groq({
-            "headline": "An activist takes an 8.2% stake",
-            "summary": "Activist Capital LP acquired 2,150,000 shares for $4,300,000.",
-            "primary_event_type": "Activist Initial",
-            "event_types": ["Activist Initial"],
-            "significance": "High",
+            "headline": "SmallCap signs a supply deal worth $4,300,000",
+            "summary": "SmallCap Industries Inc. agreed to buy 2,150,000 "
+                       "units for $4,300,000.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "",
             "deal_terms": {"deal_value": "$4,300,000",   # grounded — kept
@@ -275,33 +276,31 @@ class TestGenerateBriefing:
         assert result.catalysts == []
 
     def test_ungrounded_takeaway_dropped_but_narrative_kept(self):
-        filing = _filing(form_type="SC 13D", filed_by="Activist Capital LP",
-                         document_excerpt=_ACTIVIST_EXCERPT)
+        filing = _item_filing()
         client = _mock_groq({
-            "headline": "An activist takes an 8.2% stake",
-            "summary": "Activist Capital LP acquired 2,150,000 shares.",
-            "primary_event_type": "Activist Initial",
-            "event_types": ["Activist Initial"],
-            "significance": "High",
+            "headline": "SmallCap signs a supply deal worth $4,300,000",
+            "summary": "SmallCap Industries Inc. agreed to buy 2,150,000 units.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
             "sentiment": "Positive",
-            "investor_takeaway": "Creates a $2.50/share arb spread.",  # derived number
+            "investor_takeaway": "Adds $0.12/share of earnings power.",  # derived number
         })
         with patch.object(briefing_module, "Groq", return_value=client), \
              patch.object(briefing_module, "_llm_verify", return_value=True):
             result = generate_briefing(filing, {})
         assert result.mode == "llm_verified"
         assert result.investor_takeaway == ""
-        assert "8.2%" in result.headline
+        assert "$4,300,000" in result.headline
 
     def test_verifier_rejection_falls_back_to_facts_only(self):
-        filing = _filing(form_type="SC 13D",
-                         document_excerpt=_ACTIVIST_EXCERPT)
+        filing = _item_filing()
         client = _mock_groq({
-            "headline": "An activist takes an 8.2% stake",
-            "summary": "Activist Capital LP acquired 2,150,000 shares.",
-            "primary_event_type": "Activist Initial",
-            "event_types": ["Activist Initial"],
-            "significance": "High",
+            "headline": "SmallCap signs a supply deal worth $4,300,000",
+            "summary": "SmallCap Industries Inc. agreed to buy 2,150,000 units.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "",
         })
@@ -312,22 +311,20 @@ class TestGenerateBriefing:
         assert result.summary == ""
 
     def test_insufficient_content_escape_hatch(self):
-        filing = _filing(form_type="SC 13D",
-                         document_excerpt=_ACTIVIST_EXCERPT)
+        filing = _item_filing()
         client = _mock_groq({"insufficient_content": True})
         with patch.object(briefing_module, "Groq", return_value=client):
             result = generate_briefing(filing, {})
         assert result.mode == "facts_only"
 
-    def test_failure_falls_back_to_form_default_type(self):
-        filing = _filing(form_type="SC 13D",
-                         document_excerpt=_ACTIVIST_EXCERPT)
+    def test_failure_falls_back_to_item_mapping(self):
+        filing = _item_filing()
         with patch.object(briefing_module, "Groq",
                           side_effect=RuntimeError("api down")):
             result = generate_briefing(filing, {})
         assert result.mode == "facts_only"
-        assert result.primary_event_type == "Activist Initial"
-        assert result.event_types == ["Activist Initial"]
+        assert result.primary_event_type == "Material Agreement"
+        assert result.event_types == ["Material Agreement"]
 
     def test_failure_8k_falls_back_to_other(self):
         filing = _filing(form_type="8-K", items=[Item(

@@ -13,6 +13,8 @@
 - Production frontend lives in the separate `sensybull-web` repo (Next.js)
 
 ## Product surface notes
+- Ingest is 8-K only (July 2026 rollback): the multi-form pipeline (SC 13D/G, tenders, merger/contested proxies, delistings, NT late filings, Form 4 insider buys) was deleted — other form types were too hard to debug. Only `8-K` and `8-K/A` are in `services/ingest/forms.py`. Historical non-8-K events remain in the DB and still serialize normally; don't re-add forms without an explicit decision.
+- Event types are a deliberately small list of highly material categories (11 labels incl. "Other") defined in `services/ingest/briefing.py` EVENT_TYPES and mirrored in `services/api/app/routes/events.py` (`GET /events/types` backs the feed's category filter). Keep the two in sync; don't grow the list casually.
 - Priority is binary at the API boundary: `FilingEvent.to_ws_payload()` exposes `important` (briefing significance High → true, else tier-1 fallback). The ingest pipeline still grades High/Medium/Low internally — that stays; only the product surface is binary.
 - Thesis/positions feature was hard-rolled-back (July 2026): no `/positions` routes, no `services/api/app/services/thesis/`, no thesis-aware alert formatting. The `position` / `thesis_assessment` / `thesis_version` DB tables were intentionally left in place (historical data), but no model maps them — don't re-add mappings casually.
 - `GET /events/catalysts` was removed with the catalyst calendar; catalysts are still persisted per event and serialized inside each event payload.
