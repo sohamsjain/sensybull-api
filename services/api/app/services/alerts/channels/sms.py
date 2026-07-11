@@ -3,7 +3,6 @@
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
-from app.services.alerts import thesis_format
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +16,7 @@ class SmsChannel(NotificationChannel):
     def name(self) -> str:
         return 'sms'
 
-    def send(self, user, event, app, assessment=None) -> None:
+    def send(self, user, event, app) -> None:
         from twilio.rest import Client
         from app.models.channel_config import ChannelConfig
 
@@ -46,13 +45,11 @@ class SmsChannel(NotificationChannel):
         tier_label = TIER_LABELS.get(event.max_tier, 'Low')
         frontend_url = cfg.get('FRONTEND_URL', '').rstrip('/')
 
-        thesis = thesis_format.line(assessment)
-        header = f"[Sensybull] {thesis}" if thesis else f"[Sensybull] {tier_label} Priority"
         body = (
-            f"{header}\n"
+            f"[Sensybull] {tier_label} Priority\n"
             f"{event.ticker or event.company_name}: "
             f"{briefing.get('headline', 'New SEC Filing')}\n"
-            f"{frontend_url}/{'positions' if thesis else 'watchlist'}"
+            f"{frontend_url}/watchlist"
         )
 
         client = Client(account_sid, auth_token)

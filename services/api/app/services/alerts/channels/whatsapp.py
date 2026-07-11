@@ -3,7 +3,6 @@
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
-from app.services.alerts import thesis_format
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +16,7 @@ class WhatsAppChannel(NotificationChannel):
     def name(self) -> str:
         return 'whatsapp'
 
-    def send(self, user, event, app, assessment=None) -> None:
+    def send(self, user, event, app) -> None:
         from twilio.rest import Client
         from app.models.channel_config import ChannelConfig
 
@@ -50,11 +49,7 @@ class WhatsAppChannel(NotificationChannel):
         bullets = briefing.get('bullets', [])
         bullet_text = '\n'.join(f'• {b}' for b in bullets[:5]) if bullets else ''
 
-        thesis = thesis_format.line(assessment)
-        body = ""
-        if thesis:
-            body += f"{thesis}\n\n"
-        body += (
+        body = (
             f"*{event.ticker or event.company_name}* — "
             f"{briefing.get('headline', 'New SEC Filing')}\n"
             f"Priority: {tier_label}\n"

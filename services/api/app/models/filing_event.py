@@ -94,6 +94,20 @@ class FilingEvent(BaseModel):
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat()
 
+    @property
+    def important(self) -> bool:
+        """Binary importance flag for the frontend's All/Important filter.
+
+        The ingest pipeline still grades filings internally (tier + LLM
+        significance); the product surface collapses that to one question —
+        is this the kind of event that typically moves the stock?
+        """
+        briefing = self.briefing_json or {}
+        sig = briefing.get("significance")
+        if sig is not None:
+            return sig == "High"
+        return self.max_tier == 1
+
     def to_ws_payload(self) -> dict:
         """Serialize for WebSocket delivery to the frontend."""
         return {
@@ -108,6 +122,7 @@ class FilingEvent(BaseModel):
             "edgar_url": self.edgar_url,
             "accession_number": self.accession_number,
             "max_tier": self.max_tier,
+            "important": self.important,
             "items": self.items_json or [],
             "exhibits": self.exhibits_json or [],
             "briefing": self.briefing_json,

@@ -128,37 +128,6 @@ def get_event_types():
     return jsonify({"event_types": EVENT_TYPES})
 
 
-@events_bp.route("/catalysts", methods=["GET"])
-def get_upcoming_catalysts():
-    """Return upcoming catalysts across all events, ordered by date.
-
-    Optional ?company_id= narrows to one company — this backs the
-    per-position "upcoming events that will test your thesis" view.
-    """
-    from datetime import date
-    from app.models.catalyst import Catalyst
-
-    limit = min(request.args.get("limit", 50, type=int), 200)
-    company_id = request.args.get("company_id")
-    cutoff = date.today()
-
-    q = Catalyst.query.filter(Catalyst.catalyst_date >= cutoff)
-    if company_id:
-        q = (q.join(FilingEvent, Catalyst.filing_event_id == FilingEvent.id)
-              .filter(FilingEvent.company_id == company_id))
-    q = q.order_by(Catalyst.catalyst_date.asc()).limit(limit)
-    return jsonify({"catalysts": [
-        {
-            "id": c.id,
-            "filing_event_id": c.filing_event_id,
-            "event": c.event_description,
-            "date": c.catalyst_date.isoformat() if c.catalyst_date else None,
-            "ticker": c.ticker,
-            "company_name": c.company_name,
-        } for c in q.all()
-    ]})
-
-
 @events_bp.route("/<event_id>", methods=["GET"])
 @jwt_required()
 def get_event(event_id):

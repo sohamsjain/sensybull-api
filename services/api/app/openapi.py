@@ -210,6 +210,7 @@ OPENAPI_SPEC = {
                     "edgar_url": {"type": "string", "format": "uri", "nullable": True},
                     "accession_number": {"type": "string", "nullable": True},
                     "max_tier": {"type": "integer", "enum": [1, 2, 3], "description": "1=critical, 2=important, 3=routine"},
+                    "important": {"type": "boolean", "description": "True when this is the kind of event that typically moves the stock (backs the frontend's All/Important filter)"},
                     "items": {"type": "array", "items": {"$ref": "#/components/schemas/BriefingItem"}},
                     "exhibits": {"type": "array", "items": {"$ref": "#/components/schemas/Exhibit"}},
                     "briefing": {"$ref": "#/components/schemas/Briefing", "nullable": True},
@@ -225,17 +226,6 @@ OPENAPI_SPEC = {
                         },
                     },
                     "received_at": {"type": "string", "format": "date-time"},
-                },
-            },
-            "Catalyst": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string", "format": "uuid"},
-                    "filing_event_id": {"type": "string", "format": "uuid"},
-                    "event": {"type": "string"},
-                    "date": {"type": "string", "format": "date", "nullable": True},
-                    "ticker": {"type": "string"},
-                    "company_name": {"type": "string"},
                 },
             },
             "HealthResponse": {
@@ -480,27 +470,6 @@ OPENAPI_SPEC = {
                             "type": "object",
                             "properties": {
                                 "event_types": {"type": "array", "items": {"type": "string"}},
-                            },
-                        }}},
-                    },
-                },
-            },
-        },
-        "/api/v1/events/catalysts": {
-            "get": {
-                "tags": ["Events"],
-                "summary": "Upcoming catalyst dates",
-                "description": "Returns future catalyst dates extracted from filing briefings, ordered by date.",
-                "parameters": [
-                    {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 50, "maximum": 200}},
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Catalyst list",
-                        "content": {"application/json": {"schema": {
-                            "type": "object",
-                            "properties": {
-                                "catalysts": {"type": "array", "items": {"$ref": "#/components/schemas/Catalyst"}},
                             },
                         }}},
                     },

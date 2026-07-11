@@ -21,7 +21,7 @@ class WebhookChannel(NotificationChannel):
     def name(self) -> str:
         return 'webhook'
 
-    def send(self, user, event, app, assessment=None) -> None:
+    def send(self, user, event, app) -> None:
         from app.models.channel_config import ChannelConfig
 
         channel_config = ChannelConfig.query.filter_by(
@@ -52,12 +52,6 @@ class WebhookChannel(NotificationChannel):
             'filing_date': event.filing_date.isoformat() if event.filing_date else None,
             'timestamp': event.created_at.isoformat() if event.created_at else None,
         }
-        if assessment:
-            payload['thesis'] = {
-                'impact': assessment.get('impact'),
-                'rationale': assessment.get('rationale'),
-                'thesis_status': assessment.get('thesis_status'),
-            }
 
         body = json.dumps(payload, default=str)
         headers = {'Content-Type': 'application/json'}
