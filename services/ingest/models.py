@@ -28,6 +28,10 @@ class Briefing:
     investor_takeaway: str           # 1-sentence "so what" for a PM
     catalysts: list[dict[str, str]]  # [{"date": "2026-07-15", "event": "Shareholder vote"}]
     event_types: list[str] = field(default_factory=lambda: ["Other"])
+    # Provenance: "llm_verified" (LLM narrative that passed grounding +
+    # verifier), "facts_only" (deterministic, no LLM content), or
+    # "structured" (built programmatically from structured data, e.g. Form 4)
+    mode: str = "llm_verified"
 
 
 @dataclass

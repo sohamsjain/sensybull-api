@@ -35,7 +35,14 @@ _8K_HINT = "Focus on the reported Items; the filer is the subject company."
 FORM_REGISTRY: dict[str, FormSpec] = {spec.form: spec for spec in [
     # ── 8-K family (tier comes from items, not the form) ────────────────
     FormSpec("8-K",      3, "", "8k_items", "filer", True, _8K_HINT, "Other"),
-    FormSpec("8-K/A",    3, "", "8k_items", "filer", True, _8K_HINT, "Other"),
+    FormSpec("8-K/A",    3, "", "8k_items", "filer", True,
+             _8K_HINT + " This is an AMENDMENT to a previously filed 8-K. "
+             "Describe only what THIS amendment states — many amendments "
+             "merely refile or add an exhibit or correct an earlier item, "
+             "and if so, say exactly that. NEVER reconstruct or guess the "
+             "original transaction's terms; if this text does not restate "
+             "them, omit them.",
+             "Other"),
     FormSpec("8-K12B",   3, "", "8k_items", "filer", True, _8K_HINT, "Other"),
     FormSpec("8-K12G3",  3, "", "8k_items", "filer", True, _8K_HINT, "Other"),
     FormSpec("8-K15D5",  3, "", "8k_items", "filer", True, _8K_HINT, "Other"),

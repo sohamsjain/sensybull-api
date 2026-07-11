@@ -36,6 +36,10 @@ class FilingEventBriefing:
     investor_takeaway: str           # 1-sentence "so what"
     catalysts: list[dict[str, str]] = field(default_factory=list)
     deal_terms: dict[str, str] = field(default_factory=dict)
+    # Provenance: "llm_verified" | "facts_only" | "structured" — how the
+    # narrative was produced and what guarantees it carries (see
+    # services/ingest/briefing.py). facts_only means no LLM-authored text.
+    mode: str = "llm_verified"
 
 
 @dataclass

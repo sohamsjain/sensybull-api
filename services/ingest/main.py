@@ -68,6 +68,7 @@ def _briefing_payload(briefing) -> FilingEventBriefing | None:
         investor_takeaway=briefing.investor_takeaway,
         catalysts=briefing.catalysts,
         deal_terms=briefing.deal_terms,
+        mode=briefing.mode,
     )
 
 
