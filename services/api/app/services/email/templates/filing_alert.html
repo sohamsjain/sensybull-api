@@ -9,16 +9,6 @@
   {% set badge_bg = "#6b7280" %}
   {% endif %}
 
-  {% if thesis_label %}
-  <div style="margin-bottom:16px;padding:12px 14px;border-left:4px solid {{ thesis_color }};background:#f9fafb;border-radius:4px;">
-    <div style="font-size:13px;font-weight:700;color:{{ thesis_color }};">{{ thesis_emoji }} {{ thesis_label }}</div>
-    {% if thesis_rationale %}
-    <div style="font-size:13px;color:#374151;margin-top:4px;line-height:1.5;">{{ thesis_rationale }}</div>
-    {% endif %}
-    <div style="font-size:11px;color:#9ca3af;margin-top:6px;">Judged against your thesis for this position.</div>
-  </div>
-  {% endif %}
-
   <div style="margin-bottom:16px;">
     <span style="display:inline-block;background:{{ badge_bg }};color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;text-transform:uppercase;letter-spacing:0.5px;">{{ tier_label }} Priority</span>
   </div>

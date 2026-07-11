@@ -4,12 +4,7 @@ Called from the Redis subscriber after a FilingEvent is persisted and
 WebSocket delivery is complete. All work runs on a dedicated thread pool
 so the real-time path is never blocked.
 
-Two entrypoints:
-- trigger_alerts(...)        — the bulk, tier-gated filing alert (regular).
-- dispatch_thesis_alert(...) — a single user's thesis-aware alert, fired by
-  the thesis engine once a filing has been judged against their thesis.
-  Bypasses the tier gate (a thesis break matters at any tier) but still
-  respects the user's enabled flag, channel choices, and per-company mute.
+Entrypoint: trigger_alerts(...) — the bulk, tier-gated filing alert.
 """
 
 import logging
@@ -42,20 +37,16 @@ def _with_app_context(app, fn, *args) -> None:
             ctx.pop()
 
 
-# ── Bulk regular alerts ──────────────────────────────────────────────────
-def trigger_alerts(app, event_id: str, user_ids: set[str],
-                   exclude_user_ids: frozenset[str] = frozenset()) -> None:
+# ── Bulk alerts ──────────────────────────────────────────────────────────
+def trigger_alerts(app, event_id: str, user_ids: set[str]) -> None:
     """Submit the tier-gated filing alert to the background thread pool.
 
     Args:
         app: Flask application instance.
         event_id: ID of the persisted FilingEvent.
         user_ids: Users whose watchlists contain the company.
-        exclude_user_ids: Users to skip here because their alert is deferred
-            to the thesis engine (they hold this company with a thesis, so
-            they'll get the thesis-aware variant instead).
     """
-    targets = frozenset(user_ids) - frozenset(exclude_user_ids)
+    targets = frozenset(user_ids)
     if not targets:
         return
     _executor.submit(_with_app_context, app, _dispatch_inner, event_id, targets)
@@ -109,49 +100,6 @@ def _dispatch_inner(app, event_id: str, user_ids: frozenset[str]) -> None:
     log.info('Alert dispatcher: processed event=%s prefs=%d', event_id, len(prefs))
 
 
-# ── Per-user thesis-aware alert ──────────────────────────────────────────
-def dispatch_thesis_alert(app, event_id: str, user_id: str, assessment: dict,
-                          bypass_tier: bool = True) -> None:
-    """Submit a single user's thesis-aware filing alert.
-
-    Fired by the thesis engine after a filing is judged against the user's
-    thesis. `assessment` is a plain dict (see thesis_format) carried across
-    the thread boundary.
-    """
-    _executor.submit(_with_app_context, app, _dispatch_thesis,
-                     event_id, user_id, assessment, bypass_tier)
-
-
-def _dispatch_thesis(app, event_id: str, user_id: str, assessment: dict,
-                     bypass_tier: bool) -> None:
-    from app import db
-    from app.models.alert_preference import AlertPreference
-    from app.models.company_read_state import CompanyReadState
-    from app.models.filing_event import FilingEvent
-    from app.models.user import User
-
-    event = db.session.get(FilingEvent, event_id)
-    if event is None:
-        return
-
-    pref = AlertPreference.query.filter_by(user_id=user_id).first()
-    if pref is None or not pref.enabled:
-        return  # user turned alerts off entirely
-    if not bypass_tier and pref.max_tier < event.max_tier:
-        return
-
-    if _drop_muted(event, [pref], CompanyReadState) == []:
-        return  # muted this company
-
-    user = db.session.get(User, user_id)
-    if user is None:
-        return
-
-    _deliver_to_user(app, db, event, user, pref.channels_json or {}, assessment)
-    log.info('Alert dispatcher: thesis alert user=%s event=%s impact=%s',
-             user_id, event_id, assessment.get('impact'))
-
-
 # ── Shared helpers ───────────────────────────────────────────────────────
 def _drop_muted(event, prefs, CompanyReadState):
     """Return prefs minus users who muted this event's company."""
@@ -168,7 +116,7 @@ def _drop_muted(event, prefs, CompanyReadState):
     return [p for p in prefs if p.user_id not in muted]
 
 
-def _deliver_to_user(app, db, event, user, channels: dict, assessment: dict | None = None) -> None:
+def _deliver_to_user(app, db, event, user, channels: dict) -> None:
     """Deliver to each of a user's enabled channels, with dedup + bookkeeping."""
     from app.models.notification import Notification
     from app.services.alerts.channels import get_channel
@@ -197,7 +145,7 @@ def _deliver_to_user(app, db, event, user, channels: dict, assessment: dict | No
         db.session.commit()
 
         try:
-            channel.send(user, event, app, assessment=assessment)
+            channel.send(user, event, app)
             notification.status = 'sent'
             notification.sent_at = datetime.now(timezone.utc)
             db.session.commit()

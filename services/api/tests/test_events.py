@@ -176,24 +176,24 @@ class TestGetEventDetail:
         assert resp.status_code == 403
 
 
-class TestCatalysts:
-    def test_catalysts_endpoint(self, client, sample_event, sample_company, db_session):
-        from datetime import date, timedelta
-        from app.models.catalyst import Catalyst
-
-        future = date.today() + timedelta(days=30)
-        cat = Catalyst(
-            filing_event_id=sample_event.id,
-            event_description="Annual meeting",
-            catalyst_date=future,
-            ticker="AAPL",
-            company_name="Apple Inc.",
-        )
-        db_session.session.add(cat)
+class TestImportantFlag:
+    def test_high_significance_is_important(self, client, sample_event, db_session):
+        sample_event.briefing_json = {"headline": "Big deal", "significance": "High"}
         db_session.session.commit()
-
-        resp = client.get("/api/v1/events/catalysts")
+        resp = client.get(f"/api/v1/events/all/{sample_event.id}")
         assert resp.status_code == 200
-        catalysts = resp.get_json()["catalysts"]
-        assert len(catalysts) >= 1
-        assert catalysts[0]["event"] == "Annual meeting"
+        assert resp.get_json()["event"]["important"] is True
+
+    def test_medium_significance_is_not_important(self, client, sample_event, db_session):
+        sample_event.briefing_json = {"headline": "Routine", "significance": "Medium"}
+        db_session.session.commit()
+        resp = client.get(f"/api/v1/events/all/{sample_event.id}")
+        assert resp.get_json()["event"]["important"] is False
+
+    def test_no_briefing_falls_back_to_tier(self, client, sample_event, db_session):
+        # sample_event has max_tier=1, so without a significance grade the
+        # tier decides importance
+        sample_event.briefing_json = None
+        db_session.session.commit()
+        resp = client.get(f"/api/v1/events/all/{sample_event.id}")
+        assert resp.get_json()["event"]["important"] is True

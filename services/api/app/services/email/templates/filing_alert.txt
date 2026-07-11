@@ -1,7 +1,4 @@
-{% if thesis_label %}{{ thesis_emoji }} {{ thesis_label | upper }}{% if thesis_rationale %} — {{ thesis_rationale }}{% endif %}
-(Judged against your thesis for this position.)
-
-{% endif %}{{ tier_label }} PRIORITY FILING ALERT
+{{ tier_label }} PRIORITY FILING ALERT
 {{ company_name }}{% if ticker %} ({{ ticker }}){% endif %}
 
 {{ headline }}

@@ -4,7 +4,6 @@ import json
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
-from app.services.alerts import thesis_format
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class PushChannel(NotificationChannel):
     def name(self) -> str:
         return 'push'
 
-    def send(self, user, event, app, assessment=None) -> None:
+    def send(self, user, event, app) -> None:
         from pywebpush import webpush, WebPushException
         from app import db
         from app.models.push_subscription import PushSubscription
@@ -40,26 +39,13 @@ class PushChannel(NotificationChannel):
 
         briefing = event.briefing_json or {}
         tier_label = TIER_LABELS.get(event.max_tier, 'Low')
-        thesis_label = thesis_format.label(assessment)
-        # A thesis verdict leads the title; the rationale becomes the body.
-        title = (
-            f"{thesis_format.emoji(assessment)} {thesis_label} — {event.ticker or event.company_name}"
-            if thesis_label
-            else f"{event.ticker or event.company_name}: {briefing.get('headline', 'New SEC filing')}"
-        )
-        body = (
-            (assessment or {}).get('rationale')
-            if thesis_label
-            else None
-        ) or briefing.get('investor_takeaway') \
-            or (briefing.get('summary') or '')[:180] \
+        title = f"{event.ticker or event.company_name}: {briefing.get('headline', 'New SEC filing')}"
+        body = (briefing.get('summary') or '')[:180] \
             or f'{tier_label} priority {event.signal_type} filing'
         payload = json.dumps({
             'title': title,
             'body': body,
-            'url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/positions"
-                   if thesis_label
-                   else f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/watchlist",
+            'url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/watchlist",
             'tag': event.id,
         })
         claims_sub = cfg.get('VAPID_SUBJECT') or f"mailto:{cfg.get('SUPPORT_EMAIL', 'support@sensybull.com')}"

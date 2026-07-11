@@ -12,6 +12,11 @@
 - `services/ingest/` — SEC EDGAR polling + LLM briefing pipeline
 - Production frontend lives in the separate `sensybull-web` repo (Next.js)
 
+## Product surface notes
+- Priority is binary at the API boundary: `FilingEvent.to_ws_payload()` exposes `important` (briefing significance High → true, else tier-1 fallback). The ingest pipeline still grades High/Medium/Low internally — that stays; only the product surface is binary.
+- Thesis/positions feature was hard-rolled-back (July 2026): no `/positions` routes, no `services/api/app/services/thesis/`, no thesis-aware alert formatting. The `position` / `thesis_assessment` / `thesis_version` DB tables were intentionally left in place (historical data), but no model maps them — don't re-add mappings casually.
+- `GET /events/catalysts` was removed with the catalyst calendar; catalysts are still persisted per event and serialized inside each event payload.
+
 ## Related Projects
 - Frontend: ~/Projects/sensybull-web (Next.js)
 - API base: /api/v1
