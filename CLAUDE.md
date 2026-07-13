@@ -4,8 +4,8 @@
 - Flask 2.3, SQLAlchemy 2.0, PostgreSQL (SQLite fallback), Redis pub/sub
 - JWT auth (Flask-JWT-Extended), Resend for transactional email
 - Flask-SocketIO (gevent) for real-time filing event delivery
-- Ingest pipeline: SEC EDGAR polling → Groq LLM briefing → grounding verification → Redis → API
-- Anti-hallucination invariant: no LLM-authored narrative reaches users unless it passes `services/ingest/grounding.py` (deterministic number/date/name checks against the exact text shown to the model) plus the LLM verifier pass in `briefing.py`. Sparse/unverifiable filings publish as facts-only briefings (`briefing.mode = "facts_only"`). Never weaken this path.
+- Ingest pipeline: SEC EDGAR polling → Groq LLM briefing → Redis → API
+- Briefings are a single Groq pass with prompt-level "stick to the filing text" guidance (`briefing.mode = "llm"`). When the LLM call fails, the model reports insufficient content, or the filing has too little text to summarize, the event publishes as a deterministic facts-only briefing (`mode = "facts_only"`). July 2026: the mechanical grounding checks (`grounding.py`) and second LLM verifier pass were rolled back as net-negative (too many false rejections); historical events may carry `mode = "llm_verified"` / `"structured"`.
 
 ## Project Structure
 - `services/api/` — Flask REST API + WebSocket server

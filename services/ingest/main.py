@@ -22,7 +22,7 @@ from fetcher import (
     load_ticker_map,
     parse_feed_entries,
 )
-from forms import FEED_QUERIES, FORM_REGISTRY
+from forms import ALLOWED_FORMS
 from parser import build_filing
 from publisher import publish_filing
 from seen import load_seen, save_seen
@@ -35,7 +35,6 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 TICKER_REFRESH_INTERVAL = 24 * 60 * 60
-FEED_QUERY_DELAY = 0.25  # politeness between getcurrent requests
 
 
 def _accession_from_url(url: str) -> str:
@@ -124,7 +123,7 @@ async def poll_loop() -> None:
 
     seen = load_seen()
     log.info("Seen set loaded (%d entries). Ingesting %s. Polling every %ds.",
-             len(seen), ", ".join(FORM_REGISTRY), POLL_INTERVAL)
+             len(seen), ", ".join(sorted(ALLOWED_FORMS)), POLL_INTERVAL)
 
     while True:
         if time.time() - last_ticker_refresh >= TICKER_REFRESH_INTERVAL:
@@ -137,46 +136,34 @@ async def poll_loop() -> None:
             else:
                 log.warning("Ticker map refresh returned empty — keeping stale copy")
 
-        for query in FEED_QUERIES:
-            try:
-                entries: list[dict] = []
-                for page in range(query.pages):
-                    root = await loop.run_in_executor(
-                        None, fetch_feed, query.type_param, query.count,
-                        page * query.count,
-                    )
-                    page_entries = parse_feed_entries(root)
-                    entries.extend(page_entries)
-                    if len(page_entries) < query.count:
-                        break  # last page
-                    await asyncio.sleep(FEED_QUERY_DELAY)
+        try:
+            root = await loop.run_in_executor(None, fetch_feed, "8-K")
+            entries = parse_feed_entries(root)
 
-                published = 0
-                for entry in reversed(entries):  # oldest first
-                    form_type = entry.get("form_type", "")
-                    if form_type not in FORM_REGISTRY:
-                        continue  # exact whitelist: prefix noise dies here
-                    if entry["id"] in seen:
-                        continue
+            published = 0
+            for entry in reversed(entries):  # oldest first
+                form_type = entry.get("form_type", "")
+                if form_type not in ALLOWED_FORMS:
+                    continue  # exact whitelist: prefix noise dies here
+                if entry["id"] in seen:
+                    continue
 
-                    try:
-                        await _process_entry(entry, ticker_map, loop)
-                        seen[entry["id"]] = entry["updated"]
-                        published += 1
-                        # Crash-safety: persist immediately after each
-                        # published event (LLM work is expensive to redo)
-                        save_seen(seen)
-                    except Exception as exc:
-                        log.warning("Skipping %s: %s", entry.get("id", "?"), exc)
+                try:
+                    await _process_entry(entry, ticker_map, loop)
+                    seen[entry["id"]] = entry["updated"]
+                    published += 1
+                    # Crash-safety: persist immediately after each
+                    # published event (LLM work is expensive to redo)
+                    save_seen(seen)
+                except Exception as exc:
+                    log.warning("Skipping %s: %s", entry.get("id", "?"), exc)
 
-                # One batched save per query covers skipped/noise entries
-                save_seen(seen)
-                if published:
-                    log.info("[%s] published %d event(s)", query.type_param, published)
-            except Exception as exc:
-                log.warning("Feed fetch failed for type=%s: %s", query.type_param, exc)
-
-            await asyncio.sleep(FEED_QUERY_DELAY)
+            # One batched save per poll covers skipped/noise entries
+            save_seen(seen)
+            if published:
+                log.info("Published %d event(s)", published)
+        except Exception as exc:
+            log.warning("Feed fetch failed: %s", exc)
 
         await asyncio.sleep(POLL_INTERVAL)
 
