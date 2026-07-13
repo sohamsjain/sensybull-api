@@ -1,17 +1,15 @@
 """
 briefing.py — LLM-powered filing briefing + event classification via Groq.
 
-Takes a Filing + raw exhibit HTML, produces a structured Briefing that
-includes both the human-readable summary and classified event types.
+Takes a Filing + raw exhibit HTML and produces a structured Briefing in a
+single LLM pass: the model is shown the filing text and asked for a
+headline, summary, classification, and key dates. Prompt guidance tells it
+to stick to the filing text.
 
-Anti-hallucination contract (see grounding.py):
-1. The LLM is never called without substantive filing text to ground on.
-2. Everything the LLM returns is verified against the exact text it was
-   shown — ungrounded numbers/dates/names disqualify the narrative.
-3. A second, independent LLM pass fact-checks the surviving narrative.
-4. Any failure at any stage degrades to a deterministic facts-only
-   briefing (form type, item categories, exhibit list) — never to an
-   unverified story.
+If the LLM call fails, the model reports insufficient content, or the
+filing has too little text to summarize, the event publishes with a
+deterministic facts-only briefing instead (form type, item categories,
+tier-derived significance).
 """
 
 import itertools
@@ -22,8 +20,7 @@ import threading
 
 from groq import Groq
 
-import grounding
-from forms import FormSpec, get_spec
+from forms import LLM_HINTS
 from models import Briefing, Filing
 from parser import strip_html
 
@@ -55,10 +52,8 @@ _EXHIBIT_TEXT_CAP = 8_000
 _TOTAL_TEXT_CAP = 24_000
 
 # The LLM is only called when at least this much substantive filing text
-# (item bodies + exhibit bodies) exists to ground on.
-# Below this, there is nothing to summarize — a model asked anyway will
-# fabricate a plausible-sounding story (observed in production on
-# exhibit-only 8-K/A amendments).
+# (item bodies + exhibit bodies) exists to summarize. Below this there is
+# nothing to say — skip the call and publish facts-only.
 _MIN_SOURCE_CHARS = 200
 
 # Model fallback chain: try the best model first, fall back on rate-limit errors.
@@ -167,17 +162,10 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    Include: vote dates, tender deadlines, expected close dates, effective dates,
    record dates. Omit this field entirely if no catalysts are mentioned.
 {{form_guidance}}
-CRITICAL GROUNDING RULES — your output is mechanically checked against the
-filing text, and one ungrounded fact discards the entire briefing:
-- Use ONLY facts stated in the filing text below. You have NO other
-  knowledge about this company. Do not use memory of the company, do not
-  use typical deal patterns, do not extrapolate, do not guess.
-- Every dollar amount, share count, price, percentage, party name, and
-  date you write must appear in the provided text. If the text does not
-  state it, OMIT it. An accurate briefing with missing fields is correct;
-  a complete-looking briefing with invented fields is worthless.
-- Never invent or recall a counterparty. If none is named in the text,
-  omit the "counterparty" field.
+RULES:
+- Use ONLY facts stated in the filing text below. Do not use memory of the
+  company, do not extrapolate, do not guess. If the text does not state
+  something, OMIT it.
 - Amendments and exhibit-only filings often contain very little: describe
   only what THIS text says (e.g. "refiles the merger agreement exhibit"),
   never the underlying transaction's terms unless restated here.
@@ -186,31 +174,16 @@ filing text, and one ungrounded fact discards the entire briefing:
 Respond ONLY with valid JSON. No markdown, no commentary."""
 
 
-_VERIFIER_SYSTEM_PROMPT = """\
-You are a strict fact-checker. You are given SOURCE (text from an SEC
-filing) and CLAIMS (sentences generated about it). Decide whether EVERY
-statement in CLAIMS is directly supported by SOURCE alone. Outside
-knowledge must not be used; a claim that is plausible but not stated in
-SOURCE is unsupported. Pay special attention to: transaction types
-(merger vs investment vs sale), party names, amounts, dates, and who is
-doing what to whom.
-Respond ONLY with valid JSON:
-{"supported": true}
-or
-{"supported": false, "unsupported": ["<the unsupported claim>", ...]}"""
-
-
-def _system_prompt(spec: FormSpec | None) -> str:
-    """Render the system prompt for a form type (None → historical 8-K).
+def _system_prompt(form_type: str) -> str:
+    """Render the system prompt for a form type.
 
     Placeholders are substituted with str.replace, not str.format — the
     template contains literal JSON braces (the catalysts example) that
     format() would choke on.
     """
-    form_name = spec.form if spec else "8-K"
-    guidance = ""
-    if spec and spec.llm_hint:
-        guidance = f"\nFORM-SPECIFIC GUIDANCE ({form_name}):\n{spec.llm_hint}\n"
+    form_name = form_type or "8-K"
+    hint = LLM_HINTS.get(form_name, "")
+    guidance = f"\nFORM-SPECIFIC GUIDANCE ({form_name}):\n{hint}\n" if hint else ""
     return (
         _SYSTEM_PROMPT_TEMPLATE
         .replace("{form_name}", form_name)
@@ -311,13 +284,13 @@ def _chat_json(messages: list[dict], max_tokens: int = 1024) -> dict:
 # Facts-only briefing (deterministic — no LLM content whatsoever)
 # ---------------------------------------------------------------------------
 
-def facts_only_briefing(filing: Filing, spec: FormSpec | None) -> Briefing:
+def facts_only_briefing(filing: Filing) -> Briefing:
     """Briefing built purely from parsed filing structure.
 
-    Used whenever the LLM path cannot produce a VERIFIED narrative: too
-    little source text, LLM failure, or grounding rejection. Every field
-    here is mechanical — form type, item categories from the 8-K item
-    number registry, tier-derived significance.
+    Used whenever the LLM path cannot produce a narrative: too little
+    source text, LLM failure, or the model reporting insufficient content.
+    Every field here is mechanical — form type, item categories from the
+    8-K item number registry, tier-derived significance.
     """
     mapped = []
     for it in filing.items:
@@ -348,53 +321,22 @@ def facts_only_briefing(filing: Filing, spec: FormSpec | None) -> Briefing:
 
 
 # ---------------------------------------------------------------------------
-# LLM cross-check (second, independent verification pass)
-# ---------------------------------------------------------------------------
-
-def _llm_verify(headline: str, summary: str, source_text: str) -> bool:
-    """Independent fact-check of the narrative against the source text.
-
-    Fail-closed: any error, malformed response, or unsupported verdict
-    returns False (→ facts-only fallback). Disable with
-    BRIEFING_LLM_VERIFY=0 (the deterministic grounding checks still run).
-    """
-    if os.environ.get("BRIEFING_LLM_VERIFY", "1") == "0":
-        return True
-    claims = "\n".join(c for c in (headline, summary) if c)
-    if not claims:
-        return True
-    try:
-        data = _chat_json([
-            {"role": "system", "content": _VERIFIER_SYSTEM_PROMPT},
-            {"role": "user", "content": f"SOURCE:\n{source_text}\n\nCLAIMS:\n{claims}"},
-        ], max_tokens=512)
-        if data.get("supported") is True:
-            return True
-        log.warning("LLM verifier rejected narrative: %s", data.get("unsupported"))
-        return False
-    except Exception as exc:
-        log.warning("LLM verifier failed (%s) — failing closed", exc)
-        return False
-
-
-# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
 def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing:
-    """Generate a verified Briefing from filing data + exhibit HTML.
+    """Generate a Briefing from filing data + exhibit HTML in one LLM pass.
 
-    Returns a facts-only briefing whenever a verified narrative cannot be
-    produced — never an unverified one.
+    Falls back to a deterministic facts-only briefing when the LLM call
+    fails or there is too little source text to summarize.
     """
-    spec = get_spec(filing.form_type)
-
     exhibit_plain = {
         ex_type: strip_html(html).strip()
         for ex_type, html in exhibit_texts.items()
     }
 
-    # ── Gate: refuse to ask a model about text that isn't there ─────────
+    # Skip the LLM call entirely when there's nothing to summarize
+    # (e.g. exhibit-only 8-K/A amendments).
     substantive = "\n".join(
         [it.text for it in filing.items]
         + list(exhibit_plain.values())
@@ -402,24 +344,23 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
     if len(substantive) < _MIN_SOURCE_CHARS:
         log.info("Facts-only briefing (only %d chars of source text) for %s [%s]",
                  len(substantive), filing.title, filing.form_type)
-        return facts_only_briefing(filing, spec)
+        return facts_only_briefing(filing)
 
-    user_msg = _build_user_message(filing, exhibit_plain)
     messages = [
-        {"role": "system", "content": _system_prompt(spec)},
-        {"role": "user", "content": user_msg},
+        {"role": "system", "content": _system_prompt(filing.form_type)},
+        {"role": "user", "content": _build_user_message(filing, exhibit_plain)},
     ]
 
     try:
         data = _chat_json(messages)
     except Exception as exc:
         log.warning("Briefing generation failed for %s: %s", filing.title, exc)
-        return facts_only_briefing(filing, spec)
+        return facts_only_briefing(filing)
 
     if data.get("insufficient_content"):
         log.info("Model reported insufficient content for %s [%s]",
                  filing.title, filing.form_type)
-        return facts_only_briefing(filing, spec)
+        return facts_only_briefing(filing)
 
     headline = str(data.get("headline") or "").strip()
     summary = str(data.get("summary") or "").strip()
@@ -464,49 +405,9 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
                     "event": str(cat["event"]),
                 })
 
-    # ── Deterministic grounding: verify against the text the model saw ──
-    corpus = grounding.build_corpus(user_msg)
-    allowed_names = tuple(
-        n for n in (filing.title, filing.ticker, filing.form_type)
-        if n
-    )
-
-    narrative_problems = (
-        grounding.narrative_problems(headline, corpus, allowed_names)
-        + grounding.narrative_problems(summary, corpus, allowed_names)
-    )
-    if narrative_problems:
-        log.warning("Grounding REJECTED narrative for %s [%s]: %s",
-                    filing.title, filing.form_type, "; ".join(narrative_problems))
-        return facts_only_briefing(filing, spec)
-
-    # Takeaway is the interpretive layer — an ungrounded fact there drops
-    # only the takeaway, not the (verified) narrative.
-    if takeaway and grounding.narrative_problems(takeaway, corpus, allowed_names):
-        log.info("Dropped ungrounded investor_takeaway for %s", filing.title)
-        takeaway = ""
-
-    deal_terms, dropped_terms = grounding.verify_deal_terms(
-        deal_terms, corpus, allowed_names)
-    if dropped_terms:
-        log.info("Dropped ungrounded deal terms for %s: %s",
-                 filing.title, "; ".join(dropped_terms))
-
-    catalysts, dropped_cats = grounding.verify_catalysts(catalysts, corpus)
-    if dropped_cats:
-        log.info("Dropped ungrounded catalysts for %s: %s",
-                 filing.title, "; ".join(dropped_cats))
-
-    # ── Independent LLM cross-check of the surviving narrative ──────────
-    if not _llm_verify(headline, summary, user_msg):
-        log.warning("Verifier pass REJECTED narrative for %s [%s]",
-                    filing.title, filing.form_type)
-        return facts_only_briefing(filing, spec)
-
     if not headline:
-        headline = facts_only_briefing(filing, spec).headline
+        headline = facts_only_briefing(filing).headline
 
-    log.info("Verified briefing generated for %s", filing.title)
     return Briefing(
         headline=headline,
         summary=summary,
@@ -517,5 +418,5 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
         investor_takeaway=takeaway,
         catalysts=catalysts,
         event_types=_validate_event_types(data.get("event_types", [])),
-        mode="llm_verified",
+        mode="llm",
     )

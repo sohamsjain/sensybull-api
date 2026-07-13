@@ -3,7 +3,7 @@
 import xml.etree.ElementTree as ET
 
 from fetcher import _clean_title, parse_feed_entries
-from forms import FORM_REGISTRY
+from forms import ALLOWED_FORMS
 
 
 def _entries(fixture_text, name):
@@ -21,7 +21,7 @@ class TestParseFeedEntries:
         """The EDGAR prefix query returns other forms; the exact-form
         whitelist (applied in main.py) must admit only the 8-K family."""
         entries = _entries(fixture_text, "feed_mixed.atom")
-        admitted = [e for e in entries if e["form_type"] in FORM_REGISTRY]
+        admitted = [e for e in entries if e["form_type"] in ALLOWED_FORMS]
         assert [e["title"] for e in admitted] == ["Apple Inc."]
 
     def test_cik_from_url(self, fixture_text):
