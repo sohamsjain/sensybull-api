@@ -24,7 +24,7 @@ FEED_URL_TEMPLATE = (
     "&start={start}&search_text=&output=atom"
 )
 TICKERS_URL  = "https://www.sec.gov/files/company_tickers.json"
-POLL_INTERVAL = 600  # seconds
+POLL_INTERVAL = 60  # seconds
 
 _user_agent = os.environ.get("SEC_USER_AGENT", "")
 if not _user_agent:
