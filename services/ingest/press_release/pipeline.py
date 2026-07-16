@@ -138,6 +138,13 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 
     LLM/transport failures propagate to the caller (retried next poll).
     """
+    # Wires syndicate translations of the same release; the product is
+    # English-only and the English original arrives separately.
+    language = (release.language or "").strip().lower()
+    if language and not language.startswith("en"):
+        counters["non_english"] += 1
+        return None
+
     body_html = fetch_release_body(release)
     body_text = strip_html(body_html).strip() if body_html else ""
     headline = release.headline.strip()
@@ -231,10 +238,10 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 
 def _new_counters() -> dict:
     return {
-        "fetched": 0, "prefilter_dropped": 0, "blocklisted": 0,
-        "no_ticker": 0, "issuer_fail": 0, "issuer_unverified": 0,
-        "cross_wire_dup": 0, "llm_calls": 0, "llm_dropped": 0,
-        "llm_failed": 0, "published": 0,
+        "fetched": 0, "non_english": 0, "prefilter_dropped": 0,
+        "blocklisted": 0, "no_ticker": 0, "issuer_fail": 0,
+        "issuer_unverified": 0, "cross_wire_dup": 0, "llm_calls": 0,
+        "llm_dropped": 0, "llm_failed": 0, "published": 0,
     }
 
 

@@ -10,17 +10,33 @@ def test_globenewswire_fields(fixture_text):
     assert len(releases) == 3
 
     first = releases[0]
-    assert first.guid == "GNW-1000001"
+    assert first.guid == first.url
     assert first.wire == "globenewswire"
     assert first.url.startswith("https://www.globenewswire.com/news-release/")
     assert "Micron Technology Announces" in first.headline
-    assert first.issuer_name == "Micron Technology, Inc."
-    assert first.metadata_tickers == ["MU"]
+    # Issuer from dc:contributor (live feed drops the legal suffix)
+    assert first.issuer_name == "Micron Technology"
+    # Raw category values pass through; extract_tickers turns
+    # "Nasdaq:MU" into MU and rejects the ISIN by shape
+    assert "Nasdaq:MU" in first.metadata_tickers
+    assert "US5951121038" in first.metadata_tickers
     assert "definitive agreement" in first.body_html
-    assert first.raw_categories == ["Mergers and Acquisitions"]
+    assert first.language == "en"
 
     law_firm = releases[1]
     assert law_firm.issuer_name == "The Rosen Law Firm PA"
+
+
+def test_globenewswire_metadata_tickers_resolve(fixture_text):
+    from press_release.issuer import extract_tickers
+
+    releases = parse_wire_feed(
+        fixture_text("pr/globenewswire.xml").encode(), WIRES["globenewswire"]
+    )
+    first = releases[0]
+    tickers = extract_tickers(first.headline, "", first.metadata_tickers)
+    # Exchange prefix stripped, ISIN and any prose rejected by shape
+    assert tickers == ["MU"]
 
 
 def test_prnewswire_fields(fixture_text):

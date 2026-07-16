@@ -44,6 +44,11 @@ _TICKER_RE = re.compile(
 # is always identified in the headline or dateline, never only at the tail.
 _SCAN_CHARS = 1_500
 
+# Shape of a plausible US ticker symbol, applied to wire-metadata candidates
+# after stripping an exchange prefix. Rejects ISINs ("US75955J2042"),
+# numeric release IDs, and category prose that ride in the same feed fields.
+_METADATA_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+
 # Law-firm / shareholder-suit spam. Matched against headline + body head,
 # case-insensitive. Extend freely — a false positive here only suppresses a
 # release that was never first-party material news.
@@ -132,7 +137,7 @@ def extract_tickers(headline: str, body: str, metadata_tickers: list[str] | None
         # Metadata sometimes arrives exchange-qualified ("NYSE:MU")
         if ":" in t:
             t = t.rsplit(":", 1)[1].strip()
-        if t and t not in out:
+        if t and _METADATA_TICKER_RE.match(t) and t not in out:
             out.append(t)
 
     scan = f"{headline}\n{body[:_SCAN_CHARS]}"

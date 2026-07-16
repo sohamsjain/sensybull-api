@@ -55,6 +55,19 @@ def test_extract_tickers_metadata_first_and_dedup():
     assert got == ["MU", "AAPL"]
 
 
+def test_extract_tickers_metadata_shape_check():
+    """ISINs, release IDs, and category prose from feed metadata must not
+    become ticker candidates."""
+    got = extract_tickers("t", "", metadata_tickers=[
+        "US75955J2042",       # ISIN (GlobeNewswire ISIN category)
+        "3328345",            # numeric release id
+        "Mergers and Acquisitions",
+        "Nasdaq:RLMD",        # real stock category
+        "BRK.A",
+    ])
+    assert got == ["RLMD", "BRK.A"]
+
+
 def test_extract_tickers_ignores_deep_body_mentions():
     body = "x" * 2000 + " (NASDAQ: MU)"
     assert extract_tickers("headline", body) == []

@@ -123,3 +123,26 @@ def test_primary_prepended_when_missing_from_event_types():
         briefing = _classify()
     assert briefing.event_types[0] == "Acquisition"
     assert "Earnings" in briefing.event_types
+
+
+# ── pipeline-level: non-English drop ──────────────────────────────────────
+
+def test_non_english_release_dropped_before_any_work():
+    """Wires syndicate translations (dc:language) — drop pre-fetch, pre-LLM."""
+    from press_release.feeds import PRRelease
+    from press_release.pipeline import _new_counters, process_release
+
+    release = PRRelease(
+        guid="g1", wire="prnewswire", url="https://example.com/de",
+        headline="Die technologischen Durchbrüche hinter der ESS-Plattform",
+        body_html="<p>" + "Deutscher Text. " * 50 + "</p>",
+        published="Thu, 16 Jul 2026 11:07:00 +0000",
+        language="de",
+    )
+    counters = _new_counters()
+    with patch.object(materiality, "_chat_json") as mock_chat:
+        result = process_release(release, {"MU": {"cik": "1", "name": "x", "norm_name": "x"}},
+                                 [], counters)
+    assert result is None
+    assert counters["non_english"] == 1
+    mock_chat.assert_not_called()

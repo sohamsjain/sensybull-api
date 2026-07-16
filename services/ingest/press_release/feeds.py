@@ -60,6 +60,7 @@ class PRRelease:
     issuer_name: str = ""               # structured issuer field, "" if wire has none
     metadata_tickers: list[str] = field(default_factory=list)
     raw_categories: list[str] = field(default_factory=list)
+    language: str = ""                  # dc:language when the wire provides it
 
 
 @dataclass
@@ -187,6 +188,7 @@ def parse_wire_feed(data: bytes, config: WireConfig) -> list[PRRelease]:
             issuer_name=issuer,
             metadata_tickers=tickers,
             raw_categories=f.get("category", []),
+            language=(f.get("language") or [""])[0],
         ))
     return releases
 
@@ -221,7 +223,11 @@ WIRES: dict[str, WireConfig] = {
             "GlobeNewswire%20-%20News%20about%20Public%20Companies",
         ],
         issuer_tags=["contributor", "creator"],   # dc:contributor / dc:creator
-        ticker_tags=["identifier"],               # dc:identifier (when present)
+        # Live probe (2026-07-16): the ticker rides in
+        # <category domain=".../rss/stock">Nasdaq:RLMD</category>. Category
+        # values also include ISINs — extract_tickers' shape check drops
+        # those. (dc:identifier is an internal release number, NOT a ticker.)
+        ticker_tags=["category"],
     ),
     "prnewswire": WireConfig(
         name="prnewswire",
