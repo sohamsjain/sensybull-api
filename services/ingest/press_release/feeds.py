@@ -35,7 +35,9 @@ _CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
 # wires that allow it — feed descriptions are often teaser-length.
 _MIN_INLINE_BODY_CHARS = 600
 
-_DEFAULT_TIMEOUT = 30
+# GlobeNewswire's feed endpoint is slow to first byte; 30s produced
+# spurious timeouts in live probing.
+_DEFAULT_TIMEOUT = 60
 
 
 def _user_agent() -> str:
@@ -87,7 +89,11 @@ def fetch_pr_url(url: str, retries: int = 3, conditional: bool = False) -> bytes
     With conditional=True, sends stored ETag/Last-Modified and returns None
     on 304 Not Modified. Raises on final failure like fetcher.fetch_url.
     """
-    headers = {"User-Agent": _user_agent(), "Accept-Encoding": "gzip"}
+    headers = {
+        "User-Agent": _user_agent(),
+        "Accept-Encoding": "gzip",
+        "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+    }
     if conditional:
         v = _validators.get(url, {})
         if v.get("etag"):
@@ -220,7 +226,8 @@ WIRES: dict[str, WireConfig] = {
     "prnewswire": WireConfig(
         name="prnewswire",
         feed_urls=["https://www.prnewswire.com/rss/news-releases-list.rss"],
-        issuer_tags=[],                           # issuer only in title/dateline
+        # Live probe (2026-07-16): items carry dc:contributor = issuing org
+        issuer_tags=["contributor"],
         ticker_tags=[],
     ),
     "businesswire": WireConfig(
@@ -233,7 +240,10 @@ WIRES: dict[str, WireConfig] = {
     ),
     "accesswire": WireConfig(
         name="accesswire",
-        feed_urls=["https://www.accesswire.com/rss/latest"],
+        # Live probe (2026-07-16): accesswire.com/rss/latest serves an HTML
+        # app page, not RSS — no public feed URL confirmed. Ships disabled
+        # until one is provided via PR_FEED_URLS_ACCESSWIRE.
+        feed_urls=[],
         issuer_tags=[],
         ticker_tags=[],
     ),

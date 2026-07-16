@@ -30,10 +30,13 @@ def test_prnewswire_fields(fixture_text):
     assert len(releases) == 2
     first = releases[0]
     assert first.headline.startswith("Tesla Reports")
-    # PRN has no structured issuer field configured
-    assert first.issuer_name == ""
+    # Issuing org from dc:contributor (confirmed in the live feed)
+    assert first.issuer_name == "Tesla, Inc."
     assert first.metadata_tickers == []
     assert "NASDAQ: TSLA" in first.body_html
+    # Third-party research shop carries ITS name, not the ticker's company —
+    # exactly what resolve_issuer rejects
+    assert releases[1].issuer_name == "NewResearch Partners"
 
 
 def test_accesswire_fields(fixture_text):
@@ -43,6 +46,13 @@ def test_accesswire_fields(fixture_text):
     assert len(releases) == 1
     assert "FDA Approval" in releases[0].headline
     assert releases[0].guid == releases[0].url
+
+
+def test_accesswire_disabled_without_env(monkeypatch):
+    """The known public URL serves an HTML page, not RSS (live probe) —
+    the wire must stay off until PR_FEED_URLS_ACCESSWIRE is set."""
+    monkeypatch.delenv("PR_FEED_URLS_ACCESSWIRE", raising=False)
+    assert WIRES["accesswire"].resolved_feed_urls() == []
 
 
 def test_garbage_input_returns_empty():

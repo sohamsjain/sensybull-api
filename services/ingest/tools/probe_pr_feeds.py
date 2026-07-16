@@ -28,7 +28,9 @@ def probe(name: str) -> None:
     for url in urls:
         print(f"\n=== {name}: {url} ===")
         try:
-            raw = fetch_pr_url(url, retries=1)
+            # Full production retry count — GlobeNewswire in particular is
+            # slow to first byte and misreports as dead with a single try
+            raw = fetch_pr_url(url, retries=3)
         except Exception as exc:
             print(f"  FETCH FAILED: {exc}")
             continue
