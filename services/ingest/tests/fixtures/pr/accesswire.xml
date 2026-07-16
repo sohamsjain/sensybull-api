@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Structure-validating fixture for Accesswire's latest-releases RSS.
+     Replace with a captured production response via tools/probe_pr_feeds.py
+     when egress allows. -->
+<rss version="2.0">
+  <channel>
+    <title>ACCESSWIRE Latest Releases</title>
+    <link>https://www.accesswire.com</link>
+    <item>
+      <title>SmallCap Industries Receives FDA Approval for XYZ-100 Therapy</title>
+      <link>https://www.accesswire.com/1000021/smallcap-fda-approval</link>
+      <guid>https://www.accesswire.com/1000021/smallcap-fda-approval</guid>
+      <pubDate>Tue, 15 Jul 2026 07:45:00 -0400</pubDate>
+      <description><![CDATA[SAN DIEGO, CA / ACCESSWIRE / July 15, 2026 / SmallCap Industries Inc. (NASDAQ: SMCP) today announced that the U.S. Food and Drug Administration has approved XYZ-100 for the treatment of chronic widget fatigue in adults. Approval was based on the Phase 3 BRIGHT trial, in which XYZ-100 met its primary endpoint with a statistically significant improvement versus placebo. The company expects commercial launch in the fourth quarter of 2026 and plans to fund the launch with existing cash. SmallCap estimates the addressable US market at approximately 1.2 million patients and will host a conference call tomorrow to discuss launch economics and pricing strategy with investors and analysts.]]></description>
+    </item>
+  </channel>
+</rss>

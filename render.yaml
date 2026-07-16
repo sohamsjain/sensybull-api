@@ -75,6 +75,13 @@ services:
         sync: false  # comma-separated Groq keys
       - key: SEC_USER_AGENT
         sync: false
+      # ── Press-release ingestion (see services/ingest/press_release/) ──
+      - key: PR_INGEST_ENABLED
+        value: "0"   # flip to 1 after validating feeds with tools/probe_pr_feeds.py
+      - key: PR_POLL_INTERVAL
+        value: "180"
+      - key: PR_USER_AGENT
+        sync: false  # e.g. "Mozilla/5.0 (compatible; SensybullFeedReader/1.0)"
 
   # ── Company sync cron job ──────────────────────────────────────────────
   - type: cron

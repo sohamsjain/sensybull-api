@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Structure-validating fixture modeled on GlobeNewswire's public-companies
+     RSS (dc:contributor carries the issuing organization). Replace with a
+     captured production response via tools/probe_pr_feeds.py when egress
+     allows. -->
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>GlobeNewswire - News about Public Companies</title>
+    <link>https://www.globenewswire.com</link>
+    <item>
+      <title>Micron Technology Announces Definitive Agreement to Acquire ChipWorks for $2.1 Billion in Cash</title>
+      <link>https://www.globenewswire.com/news-release/2026/07/15/1000001/0/en/example.html</link>
+      <guid isPermaLink="false">GNW-1000001</guid>
+      <pubDate>Tue, 15 Jul 2026 08:30:00 GMT</pubDate>
+      <dc:identifier>MU</dc:identifier>
+      <dc:contributor>Micron Technology, Inc.</dc:contributor>
+      <category>Mergers and Acquisitions</category>
+      <description><![CDATA[<p>BOISE, Idaho, July 15, 2026 (GLOBE NEWSWIRE) -- Micron Technology, Inc. (Nasdaq: MU) today announced it has entered into a definitive agreement to acquire ChipWorks Corporation for $2.1 billion in cash, expected to close in the fourth quarter of 2026 subject to regulatory approval. The acquisition adds advanced packaging capacity and is expected to be accretive to earnings in the first full year. Micron will fund the transaction with cash on hand and $500 million of new term debt. The boards of both companies have unanimously approved the transaction, which requires ChipWorks shareholder approval at a special meeting expected in September 2026.</p>]]></description>
+    </item>
+    <item>
+      <title>ROSEN, A LEADING LAW FIRM, Encourages Micron Technology Inc. Investors to Secure Counsel Before Important Deadline in Securities Class Action - MU</title>
+      <link>https://www.globenewswire.com/news-release/2026/07/15/1000002/0/en/example2.html</link>
+      <guid isPermaLink="false">GNW-1000002</guid>
+      <pubDate>Tue, 15 Jul 2026 09:00:00 GMT</pubDate>
+      <dc:identifier>MU</dc:identifier>
+      <dc:contributor>The Rosen Law Firm PA</dc:contributor>
+      <category>Litigation</category>
+      <description><![CDATA[<p>NEW YORK, July 15, 2026 (GLOBE NEWSWIRE) -- WHY: Rosen Law Firm, a global investor rights law firm, reminds purchasers of common stock of Micron Technology, Inc. (NASDAQ: MU) of the important August 1, 2026 lead plaintiff deadline in the securities class action commenced by the firm.</p>]]></description>
+    </item>
+    <item>
+      <title>Acme Robotics Named a Leader in Warehouse Automation by Industry Analysts</title>
+      <link>https://www.globenewswire.com/news-release/2026/07/15/1000003/0/en/example3.html</link>
+      <guid isPermaLink="false">GNW-1000003</guid>
+      <pubDate>Tue, 15 Jul 2026 09:15:00 GMT</pubDate>
+      <dc:contributor>Acme Robotics, Inc.</dc:contributor>
+      <category>Product / Services Announcement</category>
+      <description><![CDATA[<p>AUSTIN, Texas, July 15, 2026 (GLOBE NEWSWIRE) -- Acme Robotics, Inc. (NYSE: ACME) today announced it has been named a Leader in the 2026 Warehouse Automation MarketScape report.</p>]]></description>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Structure-validating fixture modeled on PR Newswire's news-releases-list
+     RSS (no structured issuer field; issuer appears in title/dateline).
+     Replace with a captured production response via tools/probe_pr_feeds.py
+     when egress allows. -->
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>PR Newswire: News Releases</title>
+    <link>https://www.prnewswire.com</link>
+    <item>
+      <title>Tesla Reports Second Quarter 2026 Financial Results</title>
+      <link>https://www.prnewswire.com/news-releases/tesla-reports-second-quarter-2026-results-1000011.html</link>
+      <guid isPermaLink="true">https://www.prnewswire.com/news-releases/tesla-reports-second-quarter-2026-results-1000011.html</guid>
+      <pubDate>Tue, 15 Jul 2026 12:05:00 -0400</pubDate>
+      <description><![CDATA[AUSTIN, Texas, July 15, 2026 /PRNewswire/ -- Tesla, Inc. (NASDAQ: TSLA) today announced financial results for the second quarter ended June 30, 2026. Revenue was $27.9 billion, up 4% year over year, and GAAP net income was $2.1 billion. Automotive gross margin improved to 19.4% on higher deliveries and continued cost reduction. The company reaffirmed full-year guidance for vehicle deliveries and said its next-generation platform remains on track for initial production in the first half of 2027. Free cash flow for the quarter was $1.3 billion and cash and investments ended the quarter at $32.4 billion.]]></description>
+      <dc:creator>PR Newswire</dc:creator>
+    </item>
+    <item>
+      <title>Global Widget Market to Reach $18 Billion by 2031, Says NewResearch Partners</title>
+      <link>https://www.prnewswire.com/news-releases/global-widget-market-1000012.html</link>
+      <guid isPermaLink="true">https://www.prnewswire.com/news-releases/global-widget-market-1000012.html</guid>
+      <pubDate>Tue, 15 Jul 2026 12:10:00 -0400</pubDate>
+      <description><![CDATA[DUBLIN, July 15, 2026 /PRNewswire/ -- NewResearch Partners has published a comprehensive report on the global widget market, projecting growth to $18 billion by 2031.]]></description>
+      <dc:creator>PR Newswire</dc:creator>
+    </item>
+  </channel>
+</rss>

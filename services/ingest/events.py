@@ -46,8 +46,9 @@ class FilingEventBriefing:
 class FilingEvent:
     """Top-level event published to Redis channel `filing:new`."""
     # Ingest-side identifiers
-    edgar_id: str            # EDGAR Atom entry ID — global dedup key
-    signal_type: str         # EDGAR form type: "8-K" or "8-K/A"
+    edgar_id: str            # EDGAR Atom entry ID — global dedup key.
+                             # Press releases use a synthetic "pr:<wire>:<guid>".
+    signal_type: str         # EDGAR form type ("8-K" / "8-K/A") or "PR"
 
     # Company identity
     cik: str
@@ -67,6 +68,23 @@ class FilingEvent:
 
     # LLM-classified event types (e.g. ["Acquisition", "Debt / Financing"])
     event_types: list[str] = field(default_factory=list)
+
+    # Provenance + dedup (added with press-release ingestion) ---------------
+    # "edgar" for SEC filings; a wire name ("globenewswire", "prnewswire",
+    # "businesswire", "accesswire") for press releases.
+    source: str = "edgar"
+    # Wire-reported issuing organization (press releases only)
+    issuer_name: str = ""
+    # Content fingerprints of the event body — see press_release/fingerprint.py.
+    # For PRs: fingerprints of the release itself. For 8-Ks: of the first
+    # fetched EX-99 exhibit (or primary document), used for PR-after-8-K drops.
+    content_fingerprint: str = ""      # sha256 of normalized headline+body
+    headline_fingerprint: str = ""     # sha256 of normalized headline
+    content_simhash: str = ""          # 16-hex 64-bit simhash of the body
+    # 8-K only: fingerprints of each fetched exhibit + primary document, so
+    # the API can match the filing against an already-published PR event.
+    # Shape: [{"source": "EX-99.1", "exact": ..., "headline": ..., "simhash": ...}]
+    exhibit_fingerprints: list[dict] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), default=str)
