@@ -7,14 +7,14 @@ SEEN_FILE = os.path.join(os.environ.get("DATA_DIR", os.path.dirname(os.path.absp
 TTL_DAYS  = 30  # entries older than this are safe to prune
 
 
-def load_seen() -> dict[str, str]:
+def load_seen(path: str = SEEN_FILE) -> dict[str, str]:
     """Load seen set as {entry_id: iso_timestamp}.
 
     Handles legacy format (plain JSON array of ID strings) by assigning the
     current time as the timestamp — those entries will be pruned after TTL_DAYS.
     """
     try:
-        with open(SEEN_FILE, "r", encoding="utf-8") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (FileNotFoundError, json.JSONDecodeError, TypeError):
         return {}
@@ -30,7 +30,7 @@ def load_seen() -> dict[str, str]:
     return {}
 
 
-def save_seen(seen: dict[str, str]) -> None:
+def save_seen(seen: dict[str, str], path: str = SEEN_FILE) -> None:
     """Prune entries older than TTL_DAYS, then atomically write to disk."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=TTL_DAYS)
     pruned = {}
@@ -42,10 +42,10 @@ def save_seen(seen: dict[str, str]) -> None:
         except (ValueError, AttributeError):
             pruned[entry_id] = ts  # unparseable timestamp — keep to avoid re-broadcast
 
-    dir_ = os.path.dirname(SEEN_FILE)
+    dir_ = os.path.dirname(path)
     with tempfile.NamedTemporaryFile(
         "w", dir=dir_, delete=False, suffix=".tmp", encoding="utf-8"
     ) as tmp:
         json.dump(pruned, tmp)
         tmp_path = tmp.name
-    os.replace(tmp_path, SEEN_FILE)
+    os.replace(tmp_path, path)

@@ -10,12 +10,38 @@ contain the relevant company.
 
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
 
+from app.services.realtime import pr_dedup
+
 log = logging.getLogger(__name__)
+
+
+def _suppress_wrapper_8ks() -> bool:
+    """Escape hatch: PR_SUPPRESS_8K=0 keeps backfill but publishes every
+    8-K normally (use while tuning the fingerprint match on real data)."""
+    return os.environ.get("PR_SUPPRESS_8K", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _watchlist_user_ids(company) -> set:
+    from app.models.watchlist import Watchlist
+
+    if not company:
+        return set()
+    watchlists = Watchlist.query.filter(
+        Watchlist.companies.any(id=company.id)
+    ).all()
+    return {wl.user_id for wl in watchlists}
+
+
+def _emit_to_rooms(socketio, event_name: str, payload: dict, user_ids: set) -> None:
+    for uid in user_ids:
+        socketio.emit(event_name, payload, room=f"user:{uid}", namespace="/feed")
+    socketio.emit(event_name, payload, room="public", namespace="/feed")
 
 
 def _parse_filing_date(iso: str):
@@ -37,7 +63,6 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         from app.models.filing_event import FilingEvent
         from app.models.event_type import EventType
         from app.models.catalyst import Catalyst
-        from app.models.watchlist import Watchlist
 
         try:
             data = json.loads(raw_message)
@@ -53,6 +78,71 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         if FilingEvent.query.filter_by(edgar_id=edgar_id).first():
             log.debug("Subscriber: duplicate edgar_id=%s — skipped", edgar_id)
             return
+
+        signal_type = data.get("signal_type", "8-K")
+
+        # ── Cross-source dedup (press releases ↔ SEC filings) ────────────
+        if signal_type == "PR" and ticker:
+            own_fp = {
+                "exact": data.get("content_fingerprint", ""),
+                "headline": data.get("headline_fingerprint", ""),
+                "simhash": data.get("content_simhash", ""),
+            }
+            # Same release on a second wire (ingest's fingerprint file is
+            # ephemeral — the DB is the durable backstop)
+            dup = pr_dedup.find_matching_event(
+                ticker, [own_fp], pr_dedup.CROSS_WIRE_WINDOW_DAYS, ["PR"])
+            if dup:
+                log.info("Subscriber: pr_dropped_cross_wire_dup edgar_id=%s of=%s",
+                         edgar_id, dup.edgar_id)
+                return
+            # The SEC filing for this announcement already published — the
+            # wire copy adds nothing.
+            filing = pr_dedup.find_matching_event(
+                ticker, [own_fp], pr_dedup.PR_TO_FILING_WINDOW_DAYS, ["8-K", "8-K/A"])
+            if filing:
+                log.info("Subscriber: pr_dropped_matching_8k edgar_id=%s filing=%s",
+                         edgar_id, filing.edgar_id)
+                return
+
+        if signal_type in ("8-K", "8-K/A") and ticker:
+            # Redelivery of a filing that already backfilled a PR event
+            if FilingEvent.query.filter_by(related_edgar_id=edgar_id).first():
+                log.debug("Subscriber: 8-K already backfilled a PR edgar_id=%s — skipped",
+                          edgar_id)
+                return
+            exhibit_fps = data.get("exhibit_fingerprints") or []
+            pr_event = pr_dedup.find_matching_event(
+                ticker, exhibit_fps, pr_dedup.PR_TO_FILING_WINDOW_DAYS, ["PR"])
+            if pr_event:
+                # Backfill the PR event with the authoritative source — but
+                # never overwrite an earlier filing's link (an 8-K/A that
+                # refiles the same release would otherwise clobber it)
+                if not pr_event.related_edgar_id:
+                    pr_event.related_edgar_id = edgar_id
+                    pr_event.related_filing_url = data.get("edgar_url") or None
+                    pr_event.related_accession_number = data.get("accession_number") or None
+                    try:
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                        log.exception("Subscriber: PR backfill failed for %s", pr_event.id)
+                    else:
+                        update_payload = pr_event.to_ws_payload()
+                        _emit_to_rooms(socketio, "filing_event_update", update_payload,
+                                       _watchlist_user_ids(pr_event.company))
+                        log.info("Subscriber: backfilled PR %s with filing %s",
+                                 pr_event.edgar_id, edgar_id)
+                # Suppress the duplicate feed item only when the filing is a
+                # pure press-release wrapper — any substantive item beyond
+                # the PR means the 8-K still publishes.
+                if (_suppress_wrapper_8ks()
+                        and pr_dedup.is_wrapper_only(data.get("items", []))):
+                    log.info("Subscriber: 8k_suppressed_pr_dup edgar_id=%s pr=%s",
+                             edgar_id, pr_event.edgar_id)
+                    return
+
+        # ── End cross-source dedup ────────────────────────────────────────
 
         # Resolve company — create if missing so we never get orphan events
         company = None
@@ -93,7 +183,9 @@ def _handle_event(app, socketio, raw_message: str) -> None:
 
         event = FilingEvent(
             edgar_id=edgar_id,
-            signal_type=data.get("signal_type", "8-K"),
+            signal_type=signal_type,
+            source=data.get("source") or "edgar",
+            issuer_name=data.get("issuer_name") or None,
             company_id=company.id if company else None,
             cik=cik,
             ticker=ticker,
@@ -106,6 +198,9 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             exhibits_json=data.get("exhibits", []),
             briefing_json=data.get("briefing"),
             event_types_json=raw_event_types,
+            content_fingerprint=data.get("content_fingerprint") or None,
+            headline_fingerprint=data.get("headline_fingerprint") or None,
+            content_simhash=data.get("content_simhash") or None,
         )
 
         for type_name in raw_event_types:
@@ -148,29 +243,10 @@ def _handle_event(app, socketio, raw_message: str) -> None:
 
         payload = event.to_ws_payload()
 
-        # Fan-out: find every user who has this company in a watchlist
-        if company:
-            watchlists = Watchlist.query.filter(
-                Watchlist.companies.any(id=company.id)
-            ).all()
-            user_ids = {wl.user_id for wl in watchlists}
-        else:
-            # Company not in DB — no personalized delivery yet.
-            # Still emit to a public "unfiltered" room for direct-feed clients.
-            user_ids = set()
-
-        for uid in user_ids:
-            socketio.emit(
-                "filing_event",
-                payload,
-                room=f"user:{uid}",
-                namespace="/feed",
-            )
-            log.debug("Emitted filing_event to user:%s (tier=%d)", uid, max_tier)
-
-        # Also emit to the public room (for unauthenticated direct-feed clients
-        # and the existing client.html, keeping backward compat)
-        socketio.emit("filing_event", payload, room="public", namespace="/feed")
+        # Fan-out: every user who has this company in a watchlist, plus the
+        # public room (unauthenticated direct-feed clients, client.html)
+        user_ids = _watchlist_user_ids(company)
+        _emit_to_rooms(socketio, "filing_event", payload, user_ids)
 
         # Dispatch alerts (async — does not block the subscriber)
         from app.services.alerts.dispatcher import trigger_alerts

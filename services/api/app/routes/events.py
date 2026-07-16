@@ -111,11 +111,12 @@ def get_public_event(event_id):
 # Mirrors services/ingest/briefing.py EVENT_TYPES — keep the two in sync.
 # Deliberately a small list of highly material categories (July 2026
 # rollback: 8-K is the only ingested form; the long taxonomy went with the
-# other forms).
+# other forms). "Regulatory / Clinical" added with press-release ingestion
+# (FDA decisions / trial results reach the wire before any filing).
 EVENT_TYPES = [
     "Acquisition", "Material Agreement", "Earnings", "Bankruptcy",
     "Debt / Financing", "Restructuring", "Leadership Change", "Delisting",
-    "Restatement", "Cybersecurity Incident", "Other",
+    "Restatement", "Cybersecurity Incident", "Regulatory / Clinical", "Other",
 ]
 
 

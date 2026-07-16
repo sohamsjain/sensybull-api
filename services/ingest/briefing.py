@@ -77,6 +77,7 @@ EVENT_TYPES = [
     "Delisting",
     "Restatement",
     "Cybersecurity Incident",
+    "Regulatory / Clinical",
     "Other",
 ]
 # NOTE: this list is mirrored in services/api/app/routes/events.py — keep in sync.
