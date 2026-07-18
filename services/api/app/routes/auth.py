@@ -35,16 +35,32 @@ change_password_schema = ChangePasswordSchema()
 
 # ---------- helpers ---------------------------------------------------------
 
+def _is_mobile_client() -> bool:
+    """True when the request comes from the native app (sensybull-app).
+
+    Native apps have no cookie jar shared with a browser and secure OS-level
+    storage (Keychain / Keystore), so they get the refresh token in the JSON
+    body instead of an httpOnly cookie.
+    """
+    return request.headers.get('X-Client', '').lower() == 'mobile'
+
+
 def _auth_success(payload: dict, user_id: str, status: int = 200):
     """Build a successful auth response.
 
     The access token goes in the JSON body (the client sends it as a bearer
-    header). The refresh token is delivered only as an httpOnly, CSRF-protected
-    cookie so it is never exposed to JavaScript / XSS.
+    header). For browsers the refresh token is delivered only as an httpOnly,
+    CSRF-protected cookie so it is never exposed to JavaScript / XSS. For the
+    mobile app (X-Client: mobile) it is returned in the body instead — the
+    app stores it in the OS keychain and refreshes via a bearer header.
     """
     payload['access_token'] = create_access_token(identity=user_id)
+    refresh_token = create_refresh_token(identity=user_id)
+    if _is_mobile_client():
+        payload['refresh_token'] = refresh_token
+        return jsonify(payload), status
     resp = jsonify(payload)
-    set_refresh_cookies(resp, create_refresh_token(identity=user_id))
+    set_refresh_cookies(resp, refresh_token)
     return resp, status
 
 

@@ -11,6 +11,7 @@ from app import db
 from app.models.alert_preference import AlertPreference
 from app.models.channel_config import ChannelConfig
 from app.models.notification import Notification
+from app.models.device_token import DeviceToken
 from app.models.push_subscription import PushSubscription
 from app.services.alerts.channels import all_channel_names
 from app.utils.schemas import (
@@ -183,6 +184,57 @@ def delete_push_subscription():
         db.session.delete(sub)
         db.session.commit()
     return jsonify({'message': 'Unsubscribed'})
+
+
+# ── Mobile (Expo) push devices ───────────────────────────────────────
+
+_EXPO_TOKEN_RE = re.compile(r'^Expo(?:nent)?PushToken\[[A-Za-z0-9_-]+\]$')
+
+
+@alerts_bp.route('/push/devices', methods=['POST'])
+@jwt_required()
+def register_device_token():
+    """Register (or re-claim) a mobile device's Expo push token for this user."""
+    user_id = get_jwt_identity()
+    data = request.json or {}
+    token = data.get('token') or ''
+    platform = data.get('platform') or ''
+    if not _EXPO_TOKEN_RE.match(token):
+        return jsonify({'error': 'A valid Expo push token is required'}), 400
+    if platform not in ('ios', 'android'):
+        return jsonify({'error': 'platform must be "ios" or "android"'}), 400
+
+    device = DeviceToken.query.filter_by(token=token).first()
+    created = device is None
+    if created:
+        device = DeviceToken(token=token, user_id=user_id, platform=platform)
+        db.session.add(device)
+    else:
+        # Same device re-registered (possibly under a different account)
+        device.user_id = user_id
+        device.platform = platform
+    try:
+        db.session.commit()
+        return jsonify({'message': 'Device registered'}), 201 if created else 200
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to save device token'}), 500
+
+
+@alerts_bp.route('/push/devices', methods=['DELETE'])
+@jwt_required()
+def delete_device_token():
+    """Remove this device's Expo push token (sign-out / push disabled)."""
+    user_id = get_jwt_identity()
+    token = (request.json or {}).get('token')
+    if not token:
+        return jsonify({'error': 'token is required'}), 400
+
+    device = DeviceToken.query.filter_by(token=token, user_id=user_id).first()
+    if device:
+        db.session.delete(device)
+        db.session.commit()
+    return jsonify({'message': 'Device removed'})
 
 
 # ── Channel configuration ───────────────────────────────────────────

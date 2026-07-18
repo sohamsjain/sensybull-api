@@ -12,5 +12,6 @@ from app.models.alert_preference import AlertPreference  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.company_read_state import CompanyReadState  # noqa: F401
 from app.models.push_subscription import PushSubscription  # noqa: F401
+from app.models.device_token import DeviceToken  # noqa: F401
 from app.models.channel_config import ChannelConfig  # noqa: F401
 from app.models.share_event import ShareEvent  # noqa: F401
