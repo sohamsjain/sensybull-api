@@ -273,3 +273,86 @@ class TestGenerateBriefing:
             result = generate_briefing(filing, {})
         assert result.mode == "llm"
         assert result.headline == "8-K filed: Contract"
+
+
+class _FakeGroqError(Exception):
+    """Mimics a groq SDK error carrying an HTTP status and error code."""
+
+    def __init__(self, message, status_code=404, code="model_not_found"):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+
+
+class TestModelChainConfig:
+    def test_default_chain_drops_decommissioned_scout(self):
+        chain = briefing_module._load_model_chain()
+        assert "meta-llama/llama-4-scout-17b-16e-instruct" not in chain
+        assert len(chain) >= 2
+
+    def test_env_override_parses_and_trims(self, monkeypatch):
+        monkeypatch.setenv("GROQ_MODELS", " model-a , model-b ,")
+        assert briefing_module._load_model_chain() == ["model-a", "model-b"]
+
+
+class TestModelUnavailable:
+    def test_detects_404_status(self):
+        assert briefing_module._is_model_unavailable(_FakeGroqError("nope"))
+
+    def test_detects_model_not_found_code_without_status(self):
+        exc = _FakeGroqError("nope", status_code=None)
+        assert briefing_module._is_model_unavailable(exc)
+
+    def test_detects_by_message_only(self):
+        exc = Exception("The model `x` does not exist or you do not have access")
+        assert briefing_module._is_model_unavailable(exc)
+
+    def test_ordinary_error_is_not_model_unavailable(self):
+        assert not briefing_module._is_model_unavailable(RuntimeError("boom"))
+
+
+class TestModelFallback:
+    """A model Groq no longer serves must degrade to the next model, not
+    take the whole call down (the outage this fix addresses)."""
+
+    def test_model_not_found_falls_through_to_next_model(self):
+        filing = _item_filing()
+        good = {
+            "headline": "SmallCap signs a five-year supply deal worth $4,300,000",
+            "summary": "A supply agreement was signed with Widget Partners LLC.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
+            "sentiment": "Positive",
+            "investor_takeaway": "Supports expansion.",
+        }
+        response = MagicMock()
+        response.choices[0].message.content = json.dumps(good)
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            _FakeGroqError(
+                "The model `meta-llama/llama-4-scout-17b-16e-instruct` "
+                "does not exist or you do not have access to it."),
+            response,
+        ]
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(filing, {})
+        assert result.mode == "llm"
+        assert result.primary_event_type == "Material Agreement"
+        # Primary failed with 404, then the fallback model was tried.
+        models = [c.kwargs["model"]
+                  for c in client.chat.completions.create.call_args_list]
+        assert models == briefing_module._MODEL_CHAIN[:2]
+
+    def test_model_not_found_on_whole_chain_degrades_to_facts_only(self):
+        filing = _item_filing()
+        client = MagicMock()
+        client.chat.completions.create.side_effect = _FakeGroqError(
+            "model_not_found")
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(filing, {})
+        assert result.mode == "facts_only"
+        assert result.primary_event_type == "Material Agreement"
+        # Every model in the chain was attempted before giving up.
+        assert (client.chat.completions.create.call_count
+                == len(briefing_module._MODEL_CHAIN))

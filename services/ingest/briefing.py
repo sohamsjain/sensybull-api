@@ -56,11 +56,23 @@ _TOTAL_TEXT_CAP = 24_000
 # nothing to say — skip the call and publish facts-only.
 _MIN_SOURCE_CHARS = 200
 
-# Model fallback chain: try the best model first, fall back on rate-limit errors.
-_MODEL_CHAIN = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama-3.1-8b-instant",
-]
+# Model fallback chain: try the best model first, then degrade to the next
+# on errors that are specific to a single model (rate limits, or a model
+# that Groq has decommissioned / that the key can't access). Overridable via
+# GROQ_MODELS (comma-separated, best-first) so a model retirement can be
+# worked around by config without a redeploy.
+def _load_model_chain() -> list[str]:
+    raw = os.environ.get("GROQ_MODELS", "")
+    models = [m.strip() for m in raw.split(",") if m.strip()]
+    if models:
+        log.info("Groq model chain from GROQ_MODELS: %s", ", ".join(models))
+        return models
+    return [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+    ]
+
+_MODEL_CHAIN = _load_model_chain()
 
 # Canonical event types for classification — deliberately a SMALL list of
 # highly material categories (July 2026: the long multi-form taxonomy was
@@ -255,11 +267,29 @@ def _is_rate_limit(exc: Exception) -> bool:
     return status == 429
 
 
+def _is_model_unavailable(exc: Exception) -> bool:
+    """Return True if Groq rejected the model as nonexistent/inaccessible.
+
+    Groq returns HTTP 404 with code "model_not_found" when a model has been
+    decommissioned or isn't enabled for the key. Like a rate limit, this is
+    specific to the current model, so the chain should degrade to the next
+    one rather than aborting the whole call.
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status == 404:
+        return True
+    if getattr(exc, "code", None) == "model_not_found":
+        return True
+    return "model_not_found" in str(exc) or "does not exist" in str(exc)
+
+
 def _chat_json(messages: list[dict], max_tokens: int = 1024) -> dict:
     """One JSON-mode chat completion over the model fallback chain.
 
-    Rate limits fall through to the next model; any other error (or
-    exhausting the chain) raises to the caller.
+    Errors specific to a single model — rate limits (429) and unavailable
+    models (404 model_not_found, e.g. a decommissioned model) — fall through
+    to the next model in the chain. Any other error, or exhausting the
+    chain, raises to the caller.
     """
     last_exc: Exception = RuntimeError("empty model chain")
     for model in _MODEL_CHAIN:
@@ -274,8 +304,10 @@ def _chat_json(messages: list[dict], max_tokens: int = 1024) -> dict:
             return json.loads(response.choices[0].message.content)
         except Exception as exc:
             last_exc = exc
-            if _is_rate_limit(exc) and model != _MODEL_CHAIN[-1]:
-                log.warning("Rate-limited on %s, falling back", model)
+            rate_limited = _is_rate_limit(exc)
+            if (rate_limited or _is_model_unavailable(exc)) and model != _MODEL_CHAIN[-1]:
+                reason = "rate-limited" if rate_limited else "unavailable"
+                log.warning("Model %s %s, falling back", model, reason)
                 continue
             raise
     raise last_exc
