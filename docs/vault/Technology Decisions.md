@@ -85,11 +85,13 @@ The extension handles access tokens (short-lived, 15 min) and refresh tokens (lo
 **Why Groq?**
 - **Speed** — Groq's custom LPU hardware delivers tokens 5-10x faster than GPU-based providers. For a real-time pipeline, this means briefings are ready in 1-3 seconds instead of 10-30.
 - **Cost** — Open-source Llama models on Groq are significantly cheaper than GPT-4 or Claude API calls. At our volume (dozens of filings/day), cost per briefing is fractions of a cent.
-- **Quality** — Llama-4-Scout-17B produces structured JSON reliably. The briefing prompt is carefully engineered to get consistent output.
+- **Quality** — Llama-3.3-70B produces structured JSON reliably. The briefing prompt is carefully engineered to get consistent output.
 
-**Model rotation:**
-- Primary: `meta-llama/llama-4-scout-17b-16e-instruct` — Best quality
-- Fallback: `llama-3.1-8b-instant` — Used when rate-limited, still adequate
+**Model rotation** (default chain; override with `GROQ_MODELS`):
+- Primary: `llama-3.3-70b-versatile` — Best quality
+- Fallback: `llama-3.1-8b-instant` — Used when the primary is rate-limited or unavailable, still adequate
+
+(July 2026: `meta-llama/llama-4-scout-17b-16e-instruct` was retired by Groq — 404 `model_not_found` — and swapped out. The chain now degrades to the next model on model-unavailable errors too, not just rate limits.)
 
 ### EdgarTools
 

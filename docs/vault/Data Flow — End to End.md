@@ -111,11 +111,11 @@ Filing text + items + exhibits
 
 **Why Groq?** Groq provides extremely fast inference on open-source LLMs (Llama). For a real-time system where filings need to be processed quickly, Groq's speed advantage over cloud LLM providers is significant. Cost is also much lower than GPT-4 class models.
 
-**Why Llama models?** Two models in rotation:
-- `meta-llama/llama-4-scout-17b-16e-instruct` — Primary, higher quality
-- `llama-3.1-8b-instant` — Fallback on rate limits, still good enough
+**Why Llama models?** Two models in rotation (override with `GROQ_MODELS`):
+- `llama-3.3-70b-versatile` — Primary, higher quality
+- `llama-3.1-8b-instant` — Fallback, still good enough
 
-Round-robin between multiple API keys if provided, with automatic fallback to the smaller model on rate-limit errors.
+Round-robin between multiple API keys if provided, with automatic fallback to the next model on rate-limit (429) or model-unavailable (404 `model_not_found`) errors.
 
 **What the LLM does in one call:**
 1. Generates a human-readable briefing (headline, summary, takeaway)

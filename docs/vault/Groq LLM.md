@@ -25,24 +25,30 @@ Open-source Llama models on Groq cost a fraction of proprietary models:
 
 ### Quality
 
-Llama-4-Scout-17B handles our structured JSON output format reliably. The system prompt is carefully engineered to get consistent results.
+Llama-3.3-70B handles our structured JSON output format reliably. The system prompt is carefully engineered to get consistent results.
+
+> Note (July 2026): `meta-llama/llama-4-scout-17b-16e-instruct` was
+> retired by Groq (404 `model_not_found`) and replaced as primary by
+> `llama-3.3-70b-versatile`. See below on why a retirement now degrades
+> gracefully instead of taking ingestion down.
 
 ---
 
 ## Models
 
-Two models in rotation:
+Two models in rotation (default chain; override with `GROQ_MODELS`,
+comma-separated, best-first):
 
-### Primary: `meta-llama/llama-4-scout-17b-16e-instruct`
+### Primary: `llama-3.3-70b-versatile`
 
-- 17B parameters, 16-expert mixture-of-experts architecture
+- 70B dense model, stable Groq production model
 - Strong at structured output (JSON)
 - Best quality for our use case
 
 ### Fallback: `llama-3.1-8b-instant`
 
 - 8B parameters, dense architecture
-- Used when the primary model is rate-limited
+- Used when the primary model is rate-limited or unavailable
 - Smaller but still adequate for briefing generation
 - Faster and cheaper
 
@@ -50,14 +56,19 @@ Two models in rotation:
 
 ```python
 models = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "llama-3.1-8b-instant"
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
 ]
 
 # Try primary model first
-# On RateLimitError → switch to fallback
-# On other errors → retry with same model
+# On RateLimitError (429) → switch to next model
+# On model-unavailable (404 model_not_found, e.g. a retired model) → switch to next model
+# On exhausting the chain (or any other error) → raise; the caller
+#   (generate_briefing) then publishes a deterministic facts-only briefing
 ```
+
+The chain is overridable at runtime via the `GROQ_MODELS` env var so a
+model retirement can be worked around by config without a redeploy.
 
 ---
 
