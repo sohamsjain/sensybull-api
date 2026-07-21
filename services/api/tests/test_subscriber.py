@@ -168,7 +168,7 @@ class TestPayloadEdgeCases:
                                                       sample_company):
         """Filings can arrive after SEC drops the ticker mapping for a
         deregistering company; the CIK-matched Company row still knows the
-        ticker and must backfill it (restores logo, reactions, movers)."""
+        ticker and must backfill it (restores logo, reactions)."""
         from app.models.price_reaction import PriceReaction
 
         _handle_event(app, FakeSocketIO(), _make_filing_json(

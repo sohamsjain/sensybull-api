@@ -166,7 +166,7 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         # without a ticker because SEC's ticker file drops deregistered
         # companies. Our company table never deletes tickers, so the CIK
         # match still knows it — backfill so the event keeps its ticker,
-        # logo, price reactions, and movers eligibility.
+        # logo, and price reactions.
         if not ticker and company is not None and company.ticker:
             ticker = company.ticker
             log.info("Subscriber: backfilled ticker=%s from company match (cik=%s)",
