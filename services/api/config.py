@@ -28,7 +28,9 @@ class Config:
 
     JWT_SECRET_KEY = _require_env('JWT_SECRET_KEY')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
-    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=int(os.environ.get('JWT_REFRESH_DAYS') or 60))
+    MIN_AUTH_SESSION_DAYS = 183
+    _jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS') or MIN_AUTH_SESSION_DAYS)
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=max(_jwt_refresh_days, MIN_AUTH_SESSION_DAYS))
 
     # Tokens may arrive as a bearer header (access token, kept client-side) or
     # a cookie (refresh token, set httpOnly so XSS can't read it). The refresh

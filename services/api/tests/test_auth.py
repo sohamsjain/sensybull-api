@@ -145,3 +145,8 @@ class TestChangePassword:
             "new_password": "newpass456",
         })
         assert resp.status_code == 401
+
+
+class TestSessionLifetime:
+    def test_refresh_token_lasts_at_least_six_months(self, app):
+        assert app.config["JWT_REFRESH_TOKEN_EXPIRES"].days >= 183

@@ -20,8 +20,8 @@ Sensybull supports email/password and Google OAuth login, with JWT tokens for st
                 │
                 ▼
         Issue JWT tokens:
-        ├── Access token  (short-lived, ~15 min)
-        └── Refresh token (long-lived, ~30 days)
+        ├── Access token  (short-lived, 24 hours)
+        └── Refresh token (long-lived, at least 6 months / 183 days)
 ```
 
 ---
@@ -38,14 +38,14 @@ The frontend is a separate React SPA served from a different origin. Traditional
 
 ### Token Types
 
-**Access Token** (~15 minutes)
+**Access Token** (24 hours)
 - Used for every authenticated API request
 - Short-lived to limit damage if stolen
 - Contains: `user_id`, `exp`, `type: "access"`
 
-**Refresh Token** (~30 days)
+**Refresh Token** (at least 6 months / 183 days)
 - Used only to get a new access token when the current one expires
-- Stored in the client (localStorage)
+- Stored as an httpOnly, CSRF-protected cookie
 - Single endpoint: `POST /auth/refresh`
 
 ### Auto-Refresh (Frontend)
@@ -56,7 +56,7 @@ The API client (`services/web/src/api/client.js`) intercepts 401 responses and a
 Request → 401 → POST /auth/refresh → New access token → Retry original request
 ```
 
-This is transparent to the user — they stay logged in for up to 30 days without re-entering credentials.
+This is transparent to the user — they stay logged in for at least 6 months (183 days) without re-entering credentials, as long as the refresh cookie remains present and the user does not explicitly log out.
 
 ---
 
