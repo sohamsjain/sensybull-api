@@ -51,7 +51,7 @@ Every technology choice in Sensybull was made for a reason. This note explains *
 - **Cross-origin friendly** — Sent as `Authorization: Bearer` header
 - **Mobile-ready** — Same auth works for future mobile clients
 
-The extension handles access tokens (short-lived, 15 min) and refresh tokens (long-lived, 30 days), plus built-in token blocklisting hooks.
+The extension handles access tokens (short-lived, 24 hours) and refresh tokens (long-lived, at least 6 months / 183 days), plus built-in token blocklisting hooks.
 
 ### Flask-Limiter
 
