@@ -57,6 +57,17 @@ def test_prefilter_does_not_call_llm():
         mock_chat.assert_not_called()
 
 
+# ── prompt shape ──────────────────────────────────────────────────────────
+
+def test_prompt_carries_the_shared_voice_rules():
+    """Press releases are written entirely in the first person, so the
+    briefing prompt must carry the same voice rules as the 8-K one."""
+    from briefing import VOICE_RULES
+
+    assert VOICE_RULES in materiality._PR_SYSTEM_PROMPT
+    assert "perspective" not in materiality._PR_SYSTEM_PROMPT.lower()
+
+
 # ── classify_release ──────────────────────────────────────────────────────
 
 def _classify():

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import briefing as briefing_module
 from briefing import (
     EVENT_TYPES,
+    VOICE_RULES,
     _build_user_message,
     _system_prompt,
     facts_only_briefing,
@@ -70,6 +71,20 @@ class TestSystemPrompt:
 
     def test_empty_form_falls_back_to_8k(self):
         assert "Given a 8-K filing" in _system_prompt("")
+
+    def test_voice_rules_present(self):
+        """Filings speak as the company ("we were awarded ..."); the
+        briefing must speak about it."""
+        prompt = _system_prompt("8-K")
+        assert VOICE_RULES in prompt
+        for pronoun in ('"we"', '"our"', '"us"'):
+            assert pronoun in prompt
+
+    def test_no_perspective_phrasing(self):
+        """Asking for a summary "from the company's perspective" reads as
+        a voice instruction and produced first-person summaries; the prompt
+        names the subject company instead."""
+        assert "perspective" not in _system_prompt("8-K").lower()
 
     def test_event_types_are_the_narrow_material_list(self):
         assert "Other" in EVENT_TYPES
