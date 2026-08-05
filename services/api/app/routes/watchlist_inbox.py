@@ -9,6 +9,14 @@ user has seen and whether the company's alerts are muted.
 GET  /watchlist/                       watchlist companies with unread counts + last-event previews
 POST /watchlist/<company_id>/read      mark a company's history as read
 PUT  /watchlist/<company_id>/mute      mute/unmute a company's alerts
+
+Bulk variants back the multi-select UI, so acting on N companies is one
+request instead of N. They take {"company_ids": [...]} and act on the
+subset the caller actually follows:
+
+POST   /watchlist/read       mark several companies as read
+PUT    /watchlist/mute       mute/unmute several companies
+POST   /watchlist/remove     drop several companies from every watchlist
 """
 from datetime import datetime, timezone
 
@@ -82,6 +90,38 @@ def _read_state_payload(state: CompanyReadState) -> dict:
         'last_read_at': _iso(state.last_read_at),
         'muted': state.muted,
     }
+
+
+# A watchlist that large is already unusable; the cap just bounds one request.
+MAX_BULK_COMPANIES = 500
+
+
+def _bulk_target_ids(user_id: str, payload: dict) -> tuple[list[str] | None, tuple]:
+    """Validate a bulk request body and resolve it to followed company ids.
+
+    Returns ``(ids, error)`` where exactly one side is meaningful. Unknown ids
+    are dropped rather than failing the batch: a client's list can go stale
+    (another tab removed a company), and one stale id shouldn't sink the
+    whole action. A batch with nothing left to act on is a 403, matching the
+    single-company endpoints.
+    """
+    raw = payload.get('company_ids')
+    if not isinstance(raw, list) or not raw:
+        return None, (jsonify({'error': 'company_ids (non-empty list) is required'}), 400)
+    if not all(isinstance(cid, str) for cid in raw):
+        return None, (jsonify({'error': 'company_ids must be strings'}), 400)
+    if len(raw) > MAX_BULK_COMPANIES:
+        return None, (jsonify({
+            'error': f'Too many companies (max {MAX_BULK_COMPANIES})'}), 400)
+
+    followed = _user_company_ids(user_id)
+    # Preserve request order, drop duplicates and anything not followed
+    seen = set()
+    ids = [cid for cid in raw
+           if cid in followed and not (cid in seen or seen.add(cid))]
+    if not ids:
+        return None, (jsonify({'error': 'Access denied'}), 403)
+    return ids, ()
 
 
 @watchlist_inbox_bp.route('/', methods=['GET'])
@@ -172,6 +212,91 @@ def get_watchlist_inbox():
         'items': items,
         'chats': items,  # legacy key; TODO remove after web deploy
         'total_unread': sum(c['unread_count'] for c in items),
+    })
+
+
+@watchlist_inbox_bp.route('/read', methods=['POST'])
+@jwt_required()
+def mark_read_bulk():
+    """Mark several companies' histories as read in one request."""
+    user_id = get_jwt_identity()
+    ids, error = _bulk_target_ids(user_id, request.json or {})
+    if error:
+        return error
+
+    now = datetime.now(timezone.utc)
+    for company_id in ids:
+        CompanyReadState.upsert(db.session, user_id, company_id, last_read_at=now)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to mark as read'}), 500
+    return jsonify({
+        'message': f'Marked {len(ids)} companies as read',
+        'company_ids': ids,
+        'updated': len(ids),
+        'last_read_at': _iso(now),
+    })
+
+
+@watchlist_inbox_bp.route('/mute', methods=['PUT'])
+@jwt_required()
+def set_mute_bulk():
+    """Mute or unmute alert delivery for several companies in one request."""
+    user_id = get_jwt_identity()
+    payload = request.json or {}
+    muted = payload.get('muted')
+    if not isinstance(muted, bool):
+        return jsonify({'error': 'muted (boolean) is required'}), 400
+
+    ids, error = _bulk_target_ids(user_id, payload)
+    if error:
+        return error
+
+    for company_id in ids:
+        CompanyReadState.upsert(db.session, user_id, company_id, muted=muted)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update mute state'}), 500
+    return jsonify({
+        'message': f'{"Muted" if muted else "Unmuted"} {len(ids)} companies',
+        'company_ids': ids,
+        'updated': len(ids),
+        'muted': muted,
+    })
+
+
+@watchlist_inbox_bp.route('/remove', methods=['POST'])
+@jwt_required()
+def remove_companies_bulk():
+    """Drop several companies from every watchlist the caller owns.
+
+    The product surface is a single watchlist, so "remove" means "stop
+    following" — the company leaves all of the user's lists. Read state is
+    left in place, matching single-company removal, so re-adding a company
+    doesn't resurrect its whole history as unread.
+    """
+    user_id = get_jwt_identity()
+    ids, error = _bulk_target_ids(user_id, request.json or {})
+    if error:
+        return error
+
+    targets = set(ids)
+    for watchlist in Watchlist.query.filter_by(user_id=user_id).all():
+        for company in [c for c in watchlist.companies if c.id in targets]:
+            watchlist.companies.remove(company)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove companies from watchlist'}), 500
+    return jsonify({
+        'message': f'Removed {len(ids)} companies from your watchlist',
+        'company_ids': ids,
+        'removed': len(ids),
     })
 
 

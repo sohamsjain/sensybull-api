@@ -3,6 +3,8 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import pytest
+
 from app.models.alert_preference import AlertPreference
 from app.models.company_read_state import CompanyReadState
 from app.models.filing_event import FilingEvent
@@ -173,6 +175,202 @@ class TestMute:
         resp = client.put(f'/api/v1/watchlist/{sample_company_2.id}/mute',
                           headers=auth_headers, json={'muted': True})
         assert resp.status_code == 403
+
+
+# ── Bulk actions (multi-select) ──────────────────────────────────────
+
+
+@pytest.fixture
+def two_company_watchlist(db_session, sample_watchlist, sample_company_2):
+    """sample_watchlist, extended with a second company (AAPL + TSLA)."""
+    sample_watchlist.companies.append(sample_company_2)
+    db_session.session.commit()
+    return sample_watchlist
+
+
+class TestBulkValidation:
+    """Shared body validation across the three bulk endpoints."""
+
+    ENDPOINTS = (
+        ('post', '/api/v1/watchlist/read', {}),
+        ('put', '/api/v1/watchlist/mute', {'muted': True}),
+        ('post', '/api/v1/watchlist/remove', {}),
+    )
+
+    def _call(self, client, auth_headers, method, url, body):
+        return getattr(client, method)(url, headers=auth_headers, json=body)
+
+    @pytest.mark.parametrize('method,url,extra', ENDPOINTS)
+    def test_requires_auth(self, client, method, url, extra):
+        resp = getattr(client, method)(url, json={'company_ids': ['x'], **extra})
+        assert resp.status_code == 401
+
+    @pytest.mark.parametrize('method,url,extra', ENDPOINTS)
+    @pytest.mark.parametrize('company_ids', [None, [], 'abc', [1, 2]])
+    def test_rejects_bad_company_ids(self, client, auth_headers, sample_watchlist,
+                                     method, url, extra, company_ids):
+        body = dict(extra)
+        if company_ids is not None:
+            body['company_ids'] = company_ids
+        resp = self._call(client, auth_headers, method, url, body)
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize('method,url,extra', ENDPOINTS)
+    def test_rejects_oversized_batch(self, client, auth_headers, sample_watchlist,
+                                     method, url, extra):
+        resp = self._call(client, auth_headers, method, url,
+                          {'company_ids': [f'c{i}' for i in range(501)], **extra})
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize('method,url,extra', ENDPOINTS)
+    def test_denied_when_nothing_is_followed(self, client, auth_headers, sample_watchlist,
+                                             sample_company_2, method, url, extra):
+        resp = self._call(client, auth_headers, method, url,
+                          {'company_ids': [sample_company_2.id], **extra})
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize('method,url,extra', ENDPOINTS)
+    def test_unfollowed_ids_are_dropped_not_fatal(self, client, auth_headers,
+                                                  sample_watchlist, sample_company,
+                                                  sample_company_2, method, url, extra):
+        """A stale id in the batch (removed in another tab) must not sink it."""
+        resp = self._call(client, auth_headers, method, url,
+                          {'company_ids': [sample_company.id, sample_company_2.id], **extra})
+        assert resp.status_code == 200
+        assert resp.get_json()['company_ids'] == [sample_company.id]
+
+
+class TestBulkMarkRead:
+    def test_clears_unread_for_all_selected(self, client, auth_headers, db_session,
+                                            two_company_watchlist, sample_company,
+                                            sample_company_2):
+        _make_event(db_session, sample_company, 'b1')
+        _make_event(db_session, sample_company_2, 'b2')
+
+        resp = client.post('/api/v1/watchlist/read', headers=auth_headers, json={
+            'company_ids': [sample_company.id, sample_company_2.id]})
+        assert resp.status_code == 200
+        assert resp.get_json()['updated'] == 2
+
+        items = client.get('/api/v1/watchlist/', headers=auth_headers).get_json()['items']
+        assert all(item['unread_count'] == 0 for item in items)
+
+    def test_preserves_mute(self, client, auth_headers, db_session, sample_user,
+                            two_company_watchlist, sample_company):
+        db_session.session.add(CompanyReadState(
+            user_id=sample_user.id, company_id=sample_company.id, muted=True))
+        db_session.session.commit()
+
+        client.post('/api/v1/watchlist/read', headers=auth_headers,
+                    json={'company_ids': [sample_company.id]})
+        state = CompanyReadState.query.filter_by(
+            user_id=sample_user.id, company_id=sample_company.id).first()
+        assert state.muted is True
+        assert state.last_read_at is not None
+
+    def test_duplicate_ids_counted_once(self, client, auth_headers, sample_watchlist,
+                                        sample_company):
+        resp = client.post('/api/v1/watchlist/read', headers=auth_headers, json={
+            'company_ids': [sample_company.id, sample_company.id]})
+        assert resp.get_json()['updated'] == 1
+
+
+class TestBulkMute:
+    def test_mutes_and_unmutes_all_selected(self, client, auth_headers, two_company_watchlist,
+                                            sample_company, sample_company_2):
+        ids = [sample_company.id, sample_company_2.id]
+
+        resp = client.put('/api/v1/watchlist/mute', headers=auth_headers,
+                          json={'company_ids': ids, 'muted': True})
+        assert resp.status_code == 200
+        assert resp.get_json()['updated'] == 2
+        items = client.get('/api/v1/watchlist/', headers=auth_headers).get_json()['items']
+        assert all(item['muted'] for item in items)
+
+        resp = client.put('/api/v1/watchlist/mute', headers=auth_headers,
+                          json={'company_ids': ids, 'muted': False})
+        assert resp.status_code == 200
+        items = client.get('/api/v1/watchlist/', headers=auth_headers).get_json()['items']
+        assert not any(item['muted'] for item in items)
+
+    def test_requires_boolean(self, client, auth_headers, sample_watchlist, sample_company):
+        resp = client.put('/api/v1/watchlist/mute', headers=auth_headers,
+                          json={'company_ids': [sample_company.id], 'muted': 'yes'})
+        assert resp.status_code == 400
+
+    def test_preserves_last_read_at(self, client, auth_headers, db_session, sample_user,
+                                    sample_watchlist, sample_company):
+        read_at = datetime.now(timezone.utc) - timedelta(days=1)
+        db_session.session.add(CompanyReadState(
+            user_id=sample_user.id, company_id=sample_company.id, last_read_at=read_at))
+        db_session.session.commit()
+
+        client.put('/api/v1/watchlist/mute', headers=auth_headers,
+                   json={'company_ids': [sample_company.id], 'muted': True})
+        state = CompanyReadState.query.filter_by(
+            user_id=sample_user.id, company_id=sample_company.id).first()
+        assert state.muted is True
+        assert state.last_read_at is not None
+
+
+class TestBulkRemove:
+    def test_removes_all_selected(self, client, auth_headers, two_company_watchlist,
+                                  sample_company, sample_company_2):
+        resp = client.post('/api/v1/watchlist/remove', headers=auth_headers, json={
+            'company_ids': [sample_company.id, sample_company_2.id]})
+        assert resp.status_code == 200
+        assert resp.get_json()['removed'] == 2
+        assert client.get('/api/v1/watchlist/', headers=auth_headers).get_json()['items'] == []
+
+    def test_keeps_unselected_companies(self, client, auth_headers, two_company_watchlist,
+                                        sample_company, sample_company_2):
+        client.post('/api/v1/watchlist/remove', headers=auth_headers,
+                    json={'company_ids': [sample_company.id]})
+        items = client.get('/api/v1/watchlist/', headers=auth_headers).get_json()['items']
+        assert [item['company']['ticker'] for item in items] == ['TSLA']
+
+    def test_removes_from_every_watchlist(self, client, auth_headers, db_session, sample_user,
+                                          sample_watchlist, sample_company):
+        """The UI shows one watchlist; removal must clear the company from all."""
+        second = Watchlist(name='Other', user_id=sample_user.id)
+        second.companies.append(sample_company)
+        db_session.session.add(second)
+        db_session.session.commit()
+
+        resp = client.post('/api/v1/watchlist/remove', headers=auth_headers,
+                           json={'company_ids': [sample_company.id]})
+        assert resp.status_code == 200
+        assert client.get('/api/v1/watchlist/', headers=auth_headers).get_json()['items'] == []
+        assert second.companies == []
+
+    def test_leaves_another_users_watchlist_alone(self, client, auth_headers, db_session,
+                                                  sample_watchlist, sample_company):
+        from app.models.user import User
+        other = User(email='other@example.com', name='Other')
+        other.set_password('otherpass123')
+        db_session.session.add(other)
+        db_session.session.commit()
+        other_wl = Watchlist(name='Theirs', user_id=other.id)
+        other_wl.companies.append(sample_company)
+        db_session.session.add(other_wl)
+        db_session.session.commit()
+
+        client.post('/api/v1/watchlist/remove', headers=auth_headers,
+                    json={'company_ids': [sample_company.id]})
+        assert [c.id for c in other_wl.companies] == [sample_company.id]
+
+    def test_read_state_survives_removal(self, client, auth_headers, db_session, sample_user,
+                                         sample_watchlist, sample_company):
+        """Re-adding a company shouldn't resurrect its history as unread."""
+        db_session.session.add(CompanyReadState(
+            user_id=sample_user.id, company_id=sample_company.id,
+            last_read_at=datetime.now(timezone.utc)))
+        db_session.session.commit()
+
+        client.post('/api/v1/watchlist/remove', headers=auth_headers,
+                    json={'company_ids': [sample_company.id]})
+        assert CompanyReadState.query.filter_by(
+            user_id=sample_user.id, company_id=sample_company.id).first() is not None
 
 
 # ── Watchlist add initializes read state ─────────────────────────────
