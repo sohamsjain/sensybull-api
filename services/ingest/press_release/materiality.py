@@ -17,7 +17,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from briefing import EVENT_TYPES, _chat_json, _validate_event_types
+from briefing import EVENT_TYPES, VOICE_RULES, _chat_json, _validate_event_types
 from models import Briefing
 
 log = logging.getLogger(__name__)
@@ -96,9 +96,9 @@ Produce a JSON object with these fields:
 3. "headline" — one short, plain-English sentence (max 100 chars) an
    everyday reader understands at a glance. Focus on WHAT is happening.
 
-4. "summary" — 2-4 sentences from the subject company's perspective:
-   what is happening, counterparties, key economics (amounts, share
-   counts, prices), and current status. Flowing prose, not bullets.
+4. "summary" — 2-4 sentences about the subject company: what is
+   happening, counterparties, key economics (amounts, share counts,
+   prices), and current status. Flowing prose, not bullets.
 
 5. "primary_event_type" — the single most investor-relevant label from:
    [{_EVENT_TYPES_STR}]
@@ -122,6 +122,8 @@ Produce a JSON object with these fields:
 11. "catalysts" — [{{"date": "YYYY-MM-DD" or null, "event": "..."}}] for
     upcoming dates stated in the release. Omit if none.
 
+{VOICE_RULES}
+
 RULES:
 - Use ONLY facts stated in the release text. No memory of the company,
   no extrapolation.
@@ -139,8 +141,8 @@ def _build_user_message(headline: str, body_text: str, company_name: str,
         f"Subject company: {company_name}\n"
         f"Ticker: {ticker}\n"
         f"Published: {published}\n\n"
-        f"--- Press release headline ---\n{headline}\n\n"
-        f"--- Press release body ---\n{body}"
+        f"--- Press release headline (the company's own words) ---\n{headline}\n\n"
+        f"--- Press release body (the company's own words) ---\n{body}"
     )
 
 

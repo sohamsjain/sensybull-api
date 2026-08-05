@@ -115,6 +115,24 @@ _ITEM_EVENT_TYPES: dict[str, str] = {
 
 _TIER_SIGNIFICANCE = {1: "High", 2: "Medium", 3: "Low"}
 
+# Narrative voice — shared by every prompt that asks the model to write
+# prose (8-K briefings here, press releases in press_release/materiality.py).
+#
+# Source documents speak in the company's own voice: 8-K item text says
+# "the Company", and the EX-99.1 press releases they attach say "we". A
+# model summarizing that text mirrors whatever voice it was handed unless
+# told otherwise. Everything we generate is our copy ABOUT a company, never
+# the company talking to the reader, so the rule is stated once and both
+# prompts embed it verbatim.
+VOICE_RULES = """\
+VOICE (applies to "headline", "summary" and "investor_takeaway"):
+- You are an outside analyst writing about the company for investors.
+  Refer to it by name or as "the company" — never "we", "our", "us",
+  "you" or "your", even where the source text uses them.
+- Report what the source says without adopting its promotional framing.
+  Attribute the company's own expectations and self-assessments to it
+  ("the company expects ...") instead of asserting them as fact."""
+
 _SYSTEM_PROMPT_TEMPLATE = f"""\
 You are a buyside special-situations analyst reading SEC filings.
 Your job is to interpret filings the way an event-driven investor would —
@@ -131,11 +149,11 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    Bad:  "SPAC merger with FGMC; forward purchase agreement for up to 3M shares"
    Bad:  "FG Merger II Corp. enters into Forward Purchase Agreement with Atsion"
 
-2. "summary" — a 2-4 sentence paragraph written from the SUBJECT COMPANY's
-   perspective (the company whose stock is affected, which is not always the
-   filer). Tell the investor story: what deal is happening, who the
-   counterparties are, key economics (dollar amounts, share counts, prices),
-   and the current procedural status (vote pending, effective date, etc.).
+2. "summary" — a 2-4 sentence paragraph about the SUBJECT COMPANY (the
+   company whose stock is affected, which is not always the filer). Tell
+   the investor story: what deal is happening, who the counterparties are,
+   key economics (dollar amounts, share counts, prices), and the current
+   procedural status (vote pending, effective date, etc.).
    Write flowing prose, not bullet points.
 
 3. "primary_event_type" — the single MOST investor-relevant label from this list:
@@ -174,6 +192,8 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    Each entry: {{"date": "YYYY-MM-DD" or null, "event": "description"}}.
    Include: vote dates, tender deadlines, expected close dates, effective dates,
    record dates. Omit this field entirely if no catalysts are mentioned.
+
+{VOICE_RULES}
 {{form_guidance}}
 RULES:
 - Use ONLY facts stated in the filing text below. Do not use memory of the
