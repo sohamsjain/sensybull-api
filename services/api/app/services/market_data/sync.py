@@ -36,13 +36,11 @@ def _fallback_limit() -> int:
 
 
 def _snapshot_price(snap: dict):
-    """Best available last price from an Alpaca snapshot."""
-    for path in (("latestTrade", "p"), ("dailyBar", "c"), ("prevDailyBar", "c")):
-        node = snap.get(path[0]) or {}
-        price = node.get(path[1])
-        if price:
-            return price
-    return None
+    """Best available last price from an Alpaca snapshot.
+
+    Shared with the /companies/<id>/quote route — see alpaca.snapshot_price.
+    """
+    return alpaca.snapshot_price(snap)
 
 
 def _sync_prices() -> int:

@@ -93,6 +93,29 @@ def get_snapshots(symbols: list[str]) -> dict[str, dict]:
     return out
 
 
+def snapshot_price(snap: dict):
+    """Best available last price from an Alpaca snapshot.
+
+    The IEX feed is sparse: a thinly traded symbol can have no trade today,
+    so fall back through today's daily bar to the previous close.
+    """
+    for node_key, field in (("latestTrade", "p"), ("dailyBar", "c"), ("prevDailyBar", "c")):
+        node = snap.get(node_key) or {}
+        price = node.get(field)
+        if price:
+            return price
+    return None
+
+
+def snapshot_time(snap: dict):
+    """Timestamp matching the price snapshot_price() would pick."""
+    for node_key, field in (("latestTrade", "p"), ("dailyBar", "c"), ("prevDailyBar", "c")):
+        node = snap.get(node_key) or {}
+        if node.get(field):
+            return node.get("t")
+    return None
+
+
 def get_bars(
     symbols: list[str],
     timeframe: str,

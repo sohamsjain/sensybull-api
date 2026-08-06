@@ -134,6 +134,80 @@ def get_company_bars(company_id):
     return jsonify(response)
 
 
+QUOTE_CACHE_SECONDS = 60
+
+
+@companies_bp.route('/<company_id>/quote', methods=['GET'])
+@jwt_required()
+def get_company_quote(company_id):
+    """Last price and day change for the company's ticker.
+
+    Alpaca snapshot proxy, Redis-cached 60s — backs the price shown beside
+    the company name in the watchlist header. When Alpaca is unreachable
+    this falls back to the price the daily sync stored on the company, so
+    the header shows a (stale-flagged) number instead of nothing.
+    """
+    from app.services.market_data import alpaca
+    from app.services.market_data.cache import cache_get, cache_set
+
+    company = Company.query.get_or_404(company_id)
+    if not company.ticker:
+        return jsonify({'error': 'no_ticker'}), 422
+
+    cache_key = f'quote:{company.ticker}'
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+
+    symbol = alpaca.normalize_ticker(company.ticker)
+    snapshot = None
+    try:
+        snapshot = alpaca.get_snapshots([symbol]).get(symbol)
+    except alpaca.AlpacaError:
+        snapshot = None
+
+    price = alpaca.snapshot_price(snapshot) if snapshot else None
+    if price is None:
+        return _stale_quote(company)
+
+    # Day change is measured against the previous session's close. Alpaca's
+    # prevDailyBar trails dailyBar all session, so this stays "today's move"
+    # during regular hours and after the close, and becomes "since yesterday"
+    # pre-market, which is what a quote should read.
+    prev_close = (snapshot.get('prevDailyBar') or {}).get('c')
+    change = change_pct = None
+    if prev_close:
+        change = round(price - prev_close, 4)
+        change_pct = round((price - prev_close) / prev_close * 100, 2)
+
+    response = {
+        'ticker': company.ticker,
+        'price': price,
+        'prev_close': prev_close,
+        'change': change,
+        'change_pct': change_pct,
+        'as_of': alpaca.snapshot_time(snapshot),
+        'stale': False,
+    }
+    cache_set(cache_key, response, QUOTE_CACHE_SECONDS)
+    return jsonify(response)
+
+
+def _stale_quote(company):
+    """Last synced price when Alpaca has nothing for the symbol right now."""
+    if company.last_price is None:
+        return jsonify({'error': 'Market data temporarily unavailable'}), 503
+    return jsonify({
+        'ticker': company.ticker,
+        'price': float(company.last_price),
+        'prev_close': None,
+        'change': None,
+        'change_pct': None,
+        'as_of': company.price_updated_at.isoformat() if company.price_updated_at else None,
+        'stale': True,
+    })
+
+
 @companies_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_company():
