@@ -17,7 +17,13 @@ import logging
 import re
 from dataclasses import dataclass
 
-from briefing import EVENT_TYPES, VOICE_RULES, _chat_json, _validate_event_types
+from briefing import (
+    EVENT_TYPES,
+    VOICE_RULES,
+    _chat_json,
+    _coerce_deal_terms,
+    _validate_event_types,
+)
 from models import Briefing
 
 log = logging.getLogger(__name__)
@@ -109,6 +115,11 @@ Produce a JSON object with these fields:
    "counterparty", "deal_value", "share_count", "price_per_share",
    "premium", "consideration_type", "deal_status", "expected_close",
    "deal_type". Omit fields the text does not state.
+   Every value MUST be a plain, display-ready string — never a nested
+   object, array, or expression. If a figure is a total you had to add
+   up, write the total itself ("$11.5B"), not the arithmetic.
+   Good: "deal_value": "$11.5B"
+   Bad:  "deal_value": {{"$sum": "11500000000"}}
 
 8. "significance" — "High" = potential trade setup (M&A, bankruptcy,
    major regulatory/clinical outcome, material deal). "Medium" = notable
@@ -179,11 +190,7 @@ def classify_release(headline: str, body_text: str, company_name: str,
     summary = str(data.get("summary") or "").strip()
     takeaway = str(data.get("investor_takeaway") or "").strip()
 
-    raw_terms = data.get("deal_terms", {})
-    deal_terms = {
-        str(k): str(v) for k, v in raw_terms.items()
-        if isinstance(k, str) and v
-    } if isinstance(raw_terms, dict) else {}
+    deal_terms = _coerce_deal_terms(data.get("deal_terms", {}))
 
     _VALID_SIGNIFICANCE = {"high": "High", "medium": "Medium", "low": "Low"}
     raw_sig = data.get("significance", "")
