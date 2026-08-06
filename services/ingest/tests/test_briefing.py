@@ -8,6 +8,7 @@ from briefing import (
     EVENT_TYPES,
     VOICE_RULES,
     _build_user_message,
+    _coerce_deal_terms,
     _system_prompt,
     facts_only_briefing,
     generate_briefing,
@@ -155,6 +156,74 @@ class TestSourceGate:
             result = generate_briefing(filing, {})
         groq.assert_not_called()
         assert result.mode == "facts_only"
+
+
+class TestCoerceDealTerms:
+    def test_plain_strings_pass_through(self):
+        assert _coerce_deal_terms({
+            "deal_value": "$11.5B", "consideration_type": "mixed",
+        }) == {"deal_value": "$11.5B", "consideration_type": "mixed"}
+
+    def test_strips_whitespace_and_drops_empties(self):
+        assert _coerce_deal_terms({
+            "deal_value": "  $2.1B  ", "premium": "", "counterparty": None,
+        }) == {"deal_value": "$2.1B"}
+
+    def test_numbers_become_strings(self):
+        assert _coerce_deal_terms({"share_count": 2150000}) == {
+            "share_count": "2150000"}
+
+    def test_single_value_object_is_unwrapped(self):
+        # The AbbVie case: the model wrapped a total it had to add up, and a
+        # bare str() would have stored "{'$sum': '11500000000'}".
+        assert _coerce_deal_terms({
+            "deal_value": {"$sum": "11500000000"},
+        }) == {"deal_value": "11500000000"}
+
+    def test_single_element_list_is_unwrapped(self):
+        assert _coerce_deal_terms({"deal_value": ["$500M"]}) == {
+            "deal_value": "$500M"}
+
+    def test_multi_value_container_is_dropped(self):
+        # Several tranches with no stated total: formatting these into one
+        # value would be a guess, so the field is omitted entirely.
+        assert _coerce_deal_terms({
+            "deal_value": ["$500M", "$7B", "$4B"], "deal_type": "Debt raise",
+        }) == {"deal_type": "Debt raise"}
+
+    def test_deep_nesting_is_dropped(self):
+        assert _coerce_deal_terms({
+            "deal_value": {"a": {"b": {"c": "$1B"}}},
+        }) == {}
+
+    def test_booleans_are_dropped(self):
+        assert _coerce_deal_terms({"deal_value": True}) == {}
+
+    def test_non_dict_input_yields_empty(self):
+        assert _coerce_deal_terms([("deal_value", "$1B")]) == {}
+        assert _coerce_deal_terms(None) == {}
+
+    def test_non_string_keys_are_dropped(self):
+        assert _coerce_deal_terms({7: "$1B", "deal_value": "$2B"}) == {
+            "deal_value": "$2B"}
+
+    def test_nested_object_never_reaches_the_briefing(self):
+        filing = _item_filing()
+        client = _mock_groq({
+            "headline": "SmallCap agrees to a debt raise of up to $11.5B",
+            "summary": "SmallCap Industries Inc. is issuing senior notes.",
+            "primary_event_type": "Debt / Financing",
+            "event_types": ["Debt / Financing"],
+            "significance": "Medium",
+            "sentiment": "Neutral",
+            "deal_terms": {"deal_value": {"$sum": "11500000000"},
+                           "deal_type": "Debt raise"},
+        })
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(filing, {})
+        assert result.deal_terms["deal_value"] == "11500000000"
+        assert all(isinstance(v, str) for v in result.deal_terms.values())
+        assert "{" not in result.deal_terms["deal_value"]
 
 
 class TestFactsOnlyBriefing:

@@ -162,9 +162,15 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
 4. "event_types" — 1 to 3 labels from the same list (including the primary).
 
 5. "deal_terms" — a flat object of key-value pairs extracting structured data.
+   Every value MUST be a plain, display-ready string — never a nested
+   object, array, or expression. If a figure is a total you had to add up,
+   write the total itself ("$11.5B"), not the arithmetic.
+   Good: "deal_value": "$11.5B"
+   Bad:  "deal_value": {{"$sum": "11500000000"}}
+   Bad:  "deal_value": ["$500M", "$7B", "$4B"]
    Include whichever of these apply (omit fields that don't):
    - "counterparty": the other party in the transaction
-   - "deal_value": total consideration or deal size
+   - "deal_value": total consideration or deal size, abbreviated ("$11.5B")
    - "share_count": number of shares involved
    - "price_per_share": per-share price if stated
    - "premium": acquisition premium if stated or calculable (e.g. "45%")
@@ -279,6 +285,57 @@ def _validate_event_types(raw: list) -> list[str]:
         if canonical:
             out.append(canonical)
     return out[:3] or ["Other"]
+
+
+def _coerce_deal_terms(raw: object) -> dict[str, str]:
+    """Flatten the model's deal_terms into a display-ready str→str dict.
+
+    Values must survive as plain strings: they are rendered verbatim in the
+    Deal Terms block. A bare str(v) is not enough — the model sometimes
+    answers with a nested object when a figure is a total it had to add up
+    (e.g. {"deal_value": {"$sum": "11500000000"}}), and str() on a dict
+    yields its Python repr, which then ships to the UI as literal
+    "{'$sum': '11500000000'}". Unwrap single-scalar containers, drop
+    anything else.
+    """
+    if not isinstance(raw, dict):
+        return {}
+
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not value:
+            continue
+        scalar = _scalar_term(value)
+        if scalar:
+            out[str(key)] = scalar
+    return out
+
+
+def _scalar_term(value: object, _depth: int = 0) -> str:
+    """Return value as a display string, or "" if it isn't scalar-shaped.
+
+    Containers holding exactly one usable value are unwrapped (one level of
+    nesting at a time) since the payload is still unambiguous; anything with
+    several values would need a formatting decision this layer can't make.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, bool):
+        return ""      # a bare true/false is never a meaningful deal term
+    if isinstance(value, (int, float)):
+        return str(value)
+    if _depth >= 2:
+        return ""      # deeply nested: give up rather than guess
+    if isinstance(value, dict):
+        inner = list(value.values())
+    elif isinstance(value, (list, tuple)):
+        inner = list(value)
+    else:
+        return ""
+    usable = [v for v in inner if v or v == 0]
+    if len(usable) != 1:
+        return ""
+    return _scalar_term(usable[0], _depth + 1)
 
 
 def _is_rate_limit(exc: Exception) -> bool:
@@ -426,11 +483,7 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
                if isinstance(raw_primary, str) and raw_primary else "Other")
 
     # Ensure deal_terms is a flat str→str dict
-    raw_terms = data.get("deal_terms", {})
-    deal_terms = {
-        str(k): str(v) for k, v in raw_terms.items()
-        if isinstance(k, str) and v
-    } if isinstance(raw_terms, dict) else {}
+    deal_terms = _coerce_deal_terms(data.get("deal_terms", {}))
 
     # Validate significance
     _VALID_SIGNIFICANCE = {"high": "High", "medium": "Medium", "low": "Low"}
