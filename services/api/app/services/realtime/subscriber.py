@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 
 from app.services.realtime import pr_dedup
+from app.utils.deal_terms import normalize_deal_terms
 
 log = logging.getLogger(__name__)
 
@@ -179,7 +180,14 @@ def _handle_event(app, socketio, raw_message: str) -> None:
 
         raw_event_types = data.get("event_types", [])
         briefing_data = data.get("briefing") or {}
-        deal_terms = briefing_data.get("deal_terms") or {}
+        # Deal terms arrive in whatever case the model wrote them
+        # ("definitive agreement signed") and are rendered verbatim by the
+        # clients, so normalize once here — before both storage sites and
+        # the socket payload, which serializes briefing_json as stored.
+        deal_terms = normalize_deal_terms(briefing_data.get("deal_terms"))
+        briefing_json = data.get("briefing")
+        if isinstance(briefing_json, dict) and briefing_json.get("deal_terms"):
+            briefing_json = {**briefing_json, "deal_terms": deal_terms}
 
         event = FilingEvent(
             edgar_id=edgar_id,
@@ -196,7 +204,7 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             max_tier=max_tier,
             items_json=items,
             exhibits_json=data.get("exhibits", []),
-            briefing_json=data.get("briefing"),
+            briefing_json=briefing_json,
             event_types_json=raw_event_types,
             content_fingerprint=data.get("content_fingerprint") or None,
             headline_fingerprint=data.get("headline_fingerprint") or None,

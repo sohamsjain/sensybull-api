@@ -81,6 +81,45 @@ class TestHandleEvent:
         assert len(event.catalysts) == 1
         assert event.catalysts[0].event_description == "Agreement effective date"
 
+    def test_normalizes_deal_terms_case(self, app, db_session, sample_company):
+        """Model casing is fixed once, at the write, for every storage site."""
+        sio = FakeSocketIO()
+        payload = json.loads(_make_filing_json())
+        payload["briefing"]["deal_terms"] = {
+            "Deal Status": "definitive agreement signed",
+            "consideration_type": "stock",
+            "counterparty": "Agility Robotics, Inc.",
+            "deal_value": "$2,500,000,000",
+        }
+        _handle_event(app, sio, json.dumps(payload))
+
+        expected = {
+            "deal_status": "Definitive Agreement Signed",
+            "consideration_type": "Stock",
+            "counterparty": "Agility Robotics, Inc.",
+            "deal_value": "$2,500,000,000",
+        }
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-001").first()
+        assert event.briefing_json["deal_terms"] == expected
+        for event_type in event.event_types:
+            assert event_type.attributes == expected
+
+        emitted = [e for e in sio.emitted if e["event"] == "filing_event"]
+        assert emitted[0]["data"]["briefing"]["deal_terms"] == expected
+
+    def test_keeps_briefing_without_deal_terms_intact(
+        self, app, db_session, sample_company
+    ):
+        sio = FakeSocketIO()
+        payload = json.loads(_make_filing_json())
+        payload["briefing"].pop("deal_terms")
+        _handle_event(app, sio, json.dumps(payload))
+
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-001").first()
+        assert "deal_terms" not in event.briefing_json
+        assert event.briefing_json["headline"] == "Apple Signs Major Deal"
+        assert all(et.attributes is None for et in event.event_types)
+
     def test_idempotency_skips_duplicate(self, app, db_session, sample_company):
         sio = FakeSocketIO()
         _handle_event(app, sio, _make_filing_json())
