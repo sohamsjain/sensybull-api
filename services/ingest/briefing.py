@@ -168,17 +168,20 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    Good: "deal_value": "$11.5B"
    Bad:  "deal_value": {{"$sum": "11500000000"}}
    Bad:  "deal_value": ["$500M", "$7B", "$4B"]
+   Write word values in Title Case ("Definitive Agreement Signed"), keeping
+   acronyms and proper names as they are spelled ("SPAC", "Inc."). Figures
+   stay as written ("$11.5B", "45%").
    Include whichever of these apply (omit fields that don't):
    - "counterparty": the other party in the transaction
    - "deal_value": total consideration or deal size, abbreviated ("$11.5B")
    - "share_count": number of shares involved
    - "price_per_share": per-share price if stated
    - "premium": acquisition premium if stated or calculable (e.g. "45%")
-   - "consideration_type": "cash", "stock", or "mixed"
-   - "deal_status": current status (e.g. "definitive agreement signed",
-     "vote pending", "closed", "registration effective")
+   - "consideration_type": "Cash", "Stock", or "Mixed"
+   - "deal_status": current status (e.g. "Definitive Agreement Signed",
+     "Vote Pending", "Closed", "Registration Effective")
    - "expected_close": expected or actual closing date
-   - "deal_type": e.g. "SPAC merger", "asset purchase", "stock-for-stock"
+   - "deal_type": e.g. "SPAC Merger", "Asset Purchase", "Stock-for-Stock"
 
 6. "significance" — how actionable is this for an event-driven investor?
    "High" = potential trade setup (M&A, tender, activist, material deal, bankruptcy).

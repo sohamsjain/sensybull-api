@@ -120,6 +120,9 @@ Produce a JSON object with these fields:
    up, write the total itself ("$11.5B"), not the arithmetic.
    Good: "deal_value": "$11.5B"
    Bad:  "deal_value": {{"$sum": "11500000000"}}
+   Write word values in Title Case ("Definitive Agreement Signed",
+   "Cash", "SPAC Merger"), keeping acronyms and proper names as they
+   are spelled. Figures stay as written ("$11.5B", "45%").
 
 8. "significance" — "High" = potential trade setup (M&A, bankruptcy,
    major regulatory/clinical outcome, material deal). "Medium" = notable
