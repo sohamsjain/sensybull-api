@@ -49,7 +49,18 @@ def _next_api_key() -> str:
 
 _ITEM_TEXT_CAP = 6_000
 _EXHIBIT_TEXT_CAP = 8_000
-_TOTAL_TEXT_CAP = 24_000
+# Sized against the per-minute token ceiling of the models we call (8K TPM
+# on the current Groq tier). A request that alone exceeds TPM is rejected
+# outright, so the whole prompt has to fit: ~1.3K tokens of system prompt +
+# this cap (~4.2K tokens at ~3.8 chars/token) + the completion budget below
+# leaves room to spare. Raising it makes the largest filings 429 on every
+# model in the chain and publish facts-only.
+_TOTAL_TEXT_CAP = 16_000
+
+# Completion budget per call. Reasoning models bill their thinking against
+# this budget, so it sits well above the ~600 tokens the JSON answer needs;
+# too low and the JSON comes back truncated.
+_MAX_COMPLETION_TOKENS = 2_048
 
 # The LLM is only called when at least this much substantive filing text
 # (item bodies + exhibit bodies) exists to summarize. Below this there is
@@ -57,22 +68,44 @@ _TOTAL_TEXT_CAP = 24_000
 _MIN_SOURCE_CHARS = 200
 
 # Model fallback chain: try the best model first, then degrade to the next
-# on errors that are specific to a single model (rate limits, or a model
-# that Groq has decommissioned / that the key can't access). Overridable via
-# GROQ_MODELS (comma-separated, best-first) so a model retirement can be
-# worked around by config without a redeploy.
+# on errors that are specific to a single model (rate limits, a model that
+# Groq has decommissioned / that the key can't access, or a model that
+# answers with nothing usable). Overridable via GROQ_MODELS (comma-separated,
+# best-first) so a model retirement can be worked around by config without a
+# redeploy.
+#
+# August 2026: Groq decommissioned the Llama 3.x chat models. Both
+# llama-3.3-70b-versatile and llama-3.1-8b-instant now answer 404
+# model_not_found, so the chain was exhausted on every filing and every
+# briefing published facts-only. The chain is now the GPT-OSS pair Groq
+# points to as the replacement, with Qwen behind them; all three serve
+# JSON mode.
+_DEFAULT_MODEL_CHAIN = [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.6-27b",
+]
+
+
 def _load_model_chain() -> list[str]:
     raw = os.environ.get("GROQ_MODELS", "")
     models = [m.strip() for m in raw.split(",") if m.strip()]
     if models:
         log.info("Groq model chain from GROQ_MODELS: %s", ", ".join(models))
         return models
-    return [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-    ]
+    return list(_DEFAULT_MODEL_CHAIN)
 
 _MODEL_CHAIN = _load_model_chain()
+
+# Extra request kwargs per model. The GPT-OSS models reason before they
+# answer, and that thinking is billed against the completion budget; low
+# effort keeps latency and token use near what the old Llama chain used.
+# It costs nothing in output quality here — Groq returns the reasoning in
+# its own response field, never inside the JSON content we parse.
+_MODEL_KWARGS: dict[str, dict] = {
+    "openai/gpt-oss-120b": {"reasoning_effort": "low"},
+    "openai/gpt-oss-20b": {"reasoning_effort": "low"},
+}
 
 # Canonical event types for classification — deliberately a SMALL list of
 # highly material categories (July 2026: the long multi-form taxonomy was
@@ -363,30 +396,88 @@ def _is_model_unavailable(exc: Exception) -> bool:
     return "model_not_found" in str(exc) or "does not exist" in str(exc)
 
 
-def _chat_json(messages: list[dict], max_tokens: int = 1024) -> dict:
+class _EmptyCompletion(RuntimeError):
+    """The model answered with no content at all (nothing to parse)."""
+
+
+def _is_unsupported_parameter(exc: Exception, params: list[str]) -> bool:
+    """Return True if Groq rejected one of our per-model extra kwargs.
+
+    _MODEL_KWARGS is a hand-maintained table, so it can drift ahead of what
+    a model actually accepts. Groq answers HTTP 400 for an unknown or
+    unsupported field; that is worth one plain retry rather than losing an
+    otherwise healthy model.
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status != 400:
+        return False
+    message = str(exc).lower()
+    if any(p.lower() in message for p in params):
+        return True
+    return any(w in message for w in ("unsupported", "unrecognized", "not supported"))
+
+
+def _fallthrough_reason(exc: Exception) -> str | None:
+    """Why this failure is the model's fault (and worth trying the next one).
+
+    Returns a short phrase for the log, or None when the error says nothing
+    about the model — a transport failure or a bad request would fail the
+    same way on every model, so the chain should not burn through itself.
+    """
+    if _is_rate_limit(exc):
+        return "rate-limited"
+    if _is_model_unavailable(exc):
+        return "unavailable"
+    if isinstance(exc, _EmptyCompletion):
+        return "returned an empty completion"
+    if isinstance(exc, json.JSONDecodeError):
+        return "returned unparseable JSON"
+    return None
+
+
+def _one_completion(model: str, messages: list[dict], max_tokens: int) -> dict:
+    """One JSON-mode completion from a single model."""
+    client = Groq(api_key=_next_api_key())
+    extra = dict(_MODEL_KWARGS.get(model, {}))
+    request = dict(
+        model=model,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+        messages=messages,
+    )
+    try:
+        response = client.chat.completions.create(**request, **extra)
+    except Exception as exc:
+        if not extra or not _is_unsupported_parameter(exc, list(extra)):
+            raise
+        log.warning("Model %s rejected %s, retrying without it",
+                    model, ", ".join(sorted(extra)))
+        response = client.chat.completions.create(**request)
+
+    content = (response.choices[0].message.content or "").strip()
+    if not content:
+        # Reasoning models can spend the whole completion budget thinking
+        # and return nothing — indistinguishable from a model failure here.
+        raise _EmptyCompletion(f"{model} returned an empty completion")
+    return json.loads(content)
+
+
+def _chat_json(messages: list[dict], max_tokens: int = _MAX_COMPLETION_TOKENS) -> dict:
     """One JSON-mode chat completion over the model fallback chain.
 
-    Errors specific to a single model — rate limits (429) and unavailable
-    models (404 model_not_found, e.g. a decommissioned model) — fall through
-    to the next model in the chain. Any other error, or exhausting the
-    chain, raises to the caller.
+    Errors specific to a single model — rate limits (429), unavailable
+    models (404 model_not_found, e.g. a decommissioned model), and answers
+    that carry no usable JSON — fall through to the next model in the
+    chain. Any other error, or exhausting the chain, raises to the caller.
     """
     last_exc: Exception = RuntimeError("empty model chain")
     for model in _MODEL_CHAIN:
         try:
-            client = Groq(api_key=_next_api_key())
-            response = client.chat.completions.create(
-                model=model,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-                messages=messages,
-            )
-            return json.loads(response.choices[0].message.content)
+            return _one_completion(model, messages, max_tokens)
         except Exception as exc:
             last_exc = exc
-            rate_limited = _is_rate_limit(exc)
-            if (rate_limited or _is_model_unavailable(exc)) and model != _MODEL_CHAIN[-1]:
-                reason = "rate-limited" if rate_limited else "unavailable"
+            reason = _fallthrough_reason(exc)
+            if reason and model != _MODEL_CHAIN[-1]:
                 log.warning("Model %s %s, falling back", model, reason)
                 continue
             raise

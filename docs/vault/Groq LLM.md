@@ -1,6 +1,6 @@
 # Groq LLM
 
-Sensybull uses Groq's inference API to generate AI briefings from raw 8-K filing text. Groq runs open-source Llama models on custom LPU hardware, delivering fast inference at low cost.
+Sensybull uses Groq's inference API to generate AI briefings from raw 8-K filing text. Groq runs open-weight models on custom LPU hardware, delivering fast inference at low cost.
 
 ---
 
@@ -17,58 +17,96 @@ For a real-time pipeline where new filings need to be processed and delivered wi
 
 ### Cost
 
-Open-source Llama models on Groq cost a fraction of proprietary models:
+Open-weight models on Groq cost a fraction of proprietary models:
 
-- No per-token licensing fees (Llama is open-weight)
+- No per-token licensing fees
 - Groq's pricing is competitive with other inference providers
 - At our volume (dozens of filings/day), cost per briefing is negligible
 
 ### Quality
 
-Llama-3.3-70B handles our structured JSON output format reliably. The system prompt is carefully engineered to get consistent results.
+The models in the chain handle our structured JSON output format reliably. The system prompt is carefully engineered to get consistent results.
 
-> Note (July 2026): `meta-llama/llama-4-scout-17b-16e-instruct` was
-> retired by Groq (404 `model_not_found`) and replaced as primary by
-> `llama-3.3-70b-versatile`. See below on why a retirement now degrades
-> gracefully instead of taking ingestion down.
+> Note (August 2026): Groq decommissioned the Llama 3.x chat models —
+> `llama-3.3-70b-versatile` and `llama-3.1-8b-instant`, i.e. the entire
+> chain. Both answered 404 `model_not_found`, so the chain was exhausted on
+> every filing and every event published facts-only. The chain is now
+> GPT-OSS with a Qwen last resort. (`meta-llama/llama-4-scout-17b-16e-instruct`
+> went the same way in July 2026.) See below on why a retirement degrades
+> gracefully instead of taking ingestion down — and why it stops being
+> graceful once *every* model in the chain is gone.
 
 ---
 
 ## Models
 
-Two models in rotation (default chain; override with `GROQ_MODELS`,
+Three models in rotation (default chain; override with `GROQ_MODELS`,
 comma-separated, best-first):
 
-### Primary: `llama-3.3-70b-versatile`
+### Primary: `openai/gpt-oss-120b`
 
-- 70B dense model, stable Groq production model
-- Strong at structured output (JSON)
+- 120B mixture-of-experts, Groq's recommended replacement for the retired Llama chain
+- Strong at structured output (JSON mode)
 - Best quality for our use case
 
-### Fallback: `llama-3.1-8b-instant`
+### Fallback: `openai/gpt-oss-20b`
 
-- 8B parameters, dense architecture
-- Used when the primary model is rate-limited or unavailable
+- Same family, 20B — used when the primary is rate-limited or unavailable
 - Smaller but still adequate for briefing generation
 - Faster and cheaper
+
+### Last resort: `qwen/qwen3.6-27b`
+
+- Deliberately a different model family: if Groq retires the GPT-OSS pair
+  together (as it did the Llama pair), the chain still has somewhere to go
+
+### Reasoning models
+
+The GPT-OSS models think before they answer, and those reasoning tokens are
+billed against the completion budget. Two consequences the code handles:
+
+- `reasoning_effort: "low"` is sent per-model (`_MODEL_KWARGS`), keeping
+  latency and token use near the old Llama numbers. If Groq ever stops
+  accepting the field, the 400 triggers one plain retry on the same model
+  rather than losing it.
+- The completion budget is 2,048 tokens (`_MAX_COMPLETION_TOKENS`), well
+  above the ~600 the JSON answer needs, so reasoning can't truncate it.
+  The reasoning itself comes back in its own response field, never inside
+  the JSON we parse.
+
+### Token budget
+
+Groq's per-minute token ceiling applies to a single request too: one
+oversize prompt is rejected outright, on every model in the chain. The
+prompt caps are sized to fit under it — `_TOTAL_TEXT_CAP` (16K chars of
+filing text) and `press_release._BODY_TEXT_CAP` (12K chars) plus the ~1.3K
+token system prompt and the completion budget. Raising a cap without
+checking the ceiling makes the *largest* filings — usually the interesting
+ones — silently publish facts-only.
 
 ### Rotation Logic
 
 ```python
 models = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.6-27b",
 ]
 
 # Try primary model first
 # On RateLimitError (429) → switch to next model
 # On model-unavailable (404 model_not_found, e.g. a retired model) → switch to next model
-# On exhausting the chain (or any other error) → raise; the caller
-#   (generate_briefing) then publishes a deterministic facts-only briefing
+# On an unusable answer (empty completion, unparseable JSON) → switch to next model
+# On any other error (transport, 400, auth — nothing to do with the model)
+#   → raise immediately rather than burn the rest of the chain
+# On exhausting the chain → raise; the caller (generate_briefing) then
+#   publishes a deterministic facts-only briefing
 ```
 
 The chain is overridable at runtime via the `GROQ_MODELS` env var so a
-model retirement can be worked around by config without a redeploy.
+model retirement can be worked around by config without a redeploy — set it
+on the ingest worker in Render the moment a `model_not_found` shows up in
+the logs, then fix the default.
 
 ---
 
@@ -121,11 +159,13 @@ Key instructions:
 | Error | Response |
 |---|---|
 | Rate limit (429) | Switch to fallback model, try different API key |
+| Model retired (404 `model_not_found`) | Switch to next model in the chain |
+| Empty or unparseable answer | Switch to next model in the chain |
 | Timeout | Retry with same model (up to 3 attempts) |
-| Invalid JSON output | Log warning, return null briefing (filing still published with items/exhibits) |
-| API down | Log error, skip briefing (filing still published) |
+| Chain exhausted | Log warning, publish a deterministic facts-only briefing |
+| API down | Log error, publish a facts-only briefing (filing still published) |
 
-**Graceful degradation:** A filing is always published to Redis, even if the LLM call fails. The briefing field will be null, but items, exhibits, and tier are still present. This means users see the raw filing data even when the AI is unavailable.
+**Graceful degradation:** A filing is always published to Redis, even if every LLM call fails. The briefing is then `mode = "facts_only"` — form type, item categories and tier-derived significance, no generated prose — so users still see the filing, just without the narrative.
 
 ---
 

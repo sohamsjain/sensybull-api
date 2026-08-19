@@ -84,14 +84,15 @@ The extension handles access tokens (short-lived, 24 hours) and refresh tokens (
 
 **Why Groq?**
 - **Speed** — Groq's custom LPU hardware delivers tokens 5-10x faster than GPU-based providers. For a real-time pipeline, this means briefings are ready in 1-3 seconds instead of 10-30.
-- **Cost** — Open-source Llama models on Groq are significantly cheaper than GPT-4 or Claude API calls. At our volume (dozens of filings/day), cost per briefing is fractions of a cent.
-- **Quality** — Llama-3.3-70B produces structured JSON reliably. The briefing prompt is carefully engineered to get consistent output.
+- **Cost** — Open-weight models on Groq are significantly cheaper than GPT-4 or Claude API calls. At our volume (dozens of filings/day), cost per briefing is fractions of a cent.
+- **Quality** — The models we run produce structured JSON reliably. The briefing prompt is carefully engineered to get consistent output.
 
 **Model rotation** (default chain; override with `GROQ_MODELS`):
-- Primary: `llama-3.3-70b-versatile` — Best quality
-- Fallback: `llama-3.1-8b-instant` — Used when the primary is rate-limited or unavailable, still adequate
+- Primary: `openai/gpt-oss-120b` — Best quality
+- Fallback: `openai/gpt-oss-20b` — Used when the primary is rate-limited or unavailable, still adequate
+- Last resort: `qwen/qwen3.6-27b` — Different family, so a Groq retirement of the GPT-OSS pair doesn't empty the chain
 
-(July 2026: `meta-llama/llama-4-scout-17b-16e-instruct` was retired by Groq — 404 `model_not_found` — and swapped out. The chain now degrades to the next model on model-unavailable errors too, not just rate limits.)
+**What Groq has retired on us so far:** `meta-llama/llama-4-scout-17b-16e-instruct` (July 2026), then the whole Llama 3.x chat line — `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` (August 2026). Each retirement answers 404 `model_not_found`. The chain degrades on that as well as on rate limits and unusable answers, and `GROQ_MODELS` lets the next one be worked around by config rather than a redeploy.
 
 ### EdgarTools
 
