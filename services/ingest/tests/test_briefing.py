@@ -369,14 +369,137 @@ class _FakeGroqError(Exception):
 
 
 class TestModelChainConfig:
-    def test_default_chain_drops_decommissioned_scout(self):
+    def test_default_chain_drops_decommissioned_models(self):
+        """Every model Groq has retired on us so far must stay out."""
         chain = briefing_module._load_model_chain()
-        assert "meta-llama/llama-4-scout-17b-16e-instruct" not in chain
+        for retired in ("meta-llama/llama-4-scout-17b-16e-instruct",
+                        "llama-3.3-70b-versatile",
+                        "llama-3.1-8b-instant"):
+            assert retired not in chain
         assert len(chain) >= 2
 
     def test_env_override_parses_and_trims(self, monkeypatch):
         monkeypatch.setenv("GROQ_MODELS", " model-a , model-b ,")
         assert briefing_module._load_model_chain() == ["model-a", "model-b"]
+
+    def test_model_kwargs_only_name_models_in_the_chain(self):
+        """A stale kwargs entry would silently target a model we never call."""
+        for model in briefing_module._MODEL_KWARGS:
+            assert model in briefing_module._DEFAULT_MODEL_CHAIN
+
+
+class TestPerModelKwargs:
+    def test_reasoning_effort_sent_for_reasoning_models(self):
+        filing = _item_filing()
+        client = _mock_groq({
+            "headline": "SmallCap signs a five-year supply deal",
+            "summary": "A supply agreement was signed with Widget Partners LLC.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
+            "sentiment": "Positive",
+            "investor_takeaway": "Supports expansion.",
+        })
+        with patch.object(briefing_module, "Groq", return_value=client):
+            generate_briefing(filing, {})
+        kwargs = client.chat.completions.create.call_args.kwargs
+        expected = briefing_module._MODEL_KWARGS.get(briefing_module._MODEL_CHAIN[0], {})
+        for key, value in expected.items():
+            assert kwargs[key] == value
+
+    def test_rejected_extra_kwarg_retries_plain_on_same_model(self):
+        """A 400 on our own extras must not cost us the model."""
+        filing = _item_filing()
+        good = {
+            "headline": "SmallCap signs a five-year supply deal",
+            "summary": "A supply agreement was signed with Widget Partners LLC.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
+            "sentiment": "Positive",
+            "investor_takeaway": "Supports expansion.",
+        }
+        response = MagicMock()
+        response.choices[0].message.content = json.dumps(good)
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            _FakeGroqError("'reasoning_effort' is not supported",
+                           status_code=400, code="invalid_request_error"),
+            response,
+        ]
+        with patch.object(briefing_module, "_MODEL_KWARGS",
+                          {briefing_module._MODEL_CHAIN[0]: {"reasoning_effort": "low"}}), \
+             patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(filing, {})
+        assert result.mode == "llm"
+        calls = client.chat.completions.create.call_args_list
+        assert [c.kwargs["model"] for c in calls] == [briefing_module._MODEL_CHAIN[0]] * 2
+        assert "reasoning_effort" in calls[0].kwargs
+        assert "reasoning_effort" not in calls[1].kwargs
+
+    def test_ordinary_400_is_not_treated_as_our_parameter(self):
+        exc = _FakeGroqError("context length exceeded", status_code=400,
+                             code="invalid_request_error")
+        assert not briefing_module._is_unsupported_parameter(exc, ["reasoning_effort"])
+
+
+class TestUnusableAnswers:
+    """A model that answers with nothing parseable is a model problem —
+    try the next one rather than publishing facts-only."""
+
+    def _good_response(self):
+        response = MagicMock()
+        response.choices[0].message.content = json.dumps({
+            "headline": "SmallCap signs a five-year supply deal",
+            "summary": "A supply agreement was signed with Widget Partners LLC.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
+            "sentiment": "Positive",
+            "investor_takeaway": "Supports expansion.",
+        })
+        return response
+
+    def _response_with(self, content):
+        response = MagicMock()
+        response.choices[0].message.content = content
+        return response
+
+    def test_empty_completion_falls_through(self):
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            self._response_with("   "), self._good_response()]
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(_item_filing(), {})
+        assert result.mode == "llm"
+        assert client.chat.completions.create.call_count == 2
+
+    def test_unparseable_json_falls_through(self):
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            self._response_with("Here you go: {oops"), self._good_response()]
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(_item_filing(), {})
+        assert result.mode == "llm"
+        assert client.chat.completions.create.call_count == 2
+
+    def test_unusable_answer_on_last_model_is_facts_only(self):
+        client = MagicMock()
+        client.chat.completions.create.return_value = self._response_with("")
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(_item_filing(), {})
+        assert result.mode == "facts_only"
+        assert client.chat.completions.create.call_count == len(briefing_module._MODEL_CHAIN)
+
+    def test_transport_error_does_not_burn_the_chain(self):
+        """A 500 says nothing about the model — retrying the rest is waste."""
+        client = MagicMock()
+        client.chat.completions.create.side_effect = _FakeGroqError(
+            "server error", status_code=500, code="internal_server_error")
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(_item_filing(), {})
+        assert result.mode == "facts_only"
+        assert client.chat.completions.create.call_count == 1
 
 
 class TestModelUnavailable:

@@ -30,7 +30,11 @@ log = logging.getLogger(__name__)
 
 _EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
 
-_BODY_TEXT_CAP = 16_000
+# Bounded by the same per-minute token ceiling as the 8-K prompt (see
+# briefing._TOTAL_TEXT_CAP): system prompt + body + completion budget has to
+# fit inside one request, and a release long enough to hit this cap has
+# said everything material well before it.
+_BODY_TEXT_CAP = 12_000
 _MIN_BODY_CHARS = 400
 
 # Promotional-content prefilter — matched against the HEADLINE only

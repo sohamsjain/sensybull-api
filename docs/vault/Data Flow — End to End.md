@@ -109,13 +109,14 @@ Filing text + items + exhibits
 └──────────────────────────┘
 ```
 
-**Why Groq?** Groq provides extremely fast inference on open-source LLMs (Llama). For a real-time system where filings need to be processed quickly, Groq's speed advantage over cloud LLM providers is significant. Cost is also much lower than GPT-4 class models.
+**Why Groq?** Groq provides extremely fast inference on open-weight LLMs. For a real-time system where filings need to be processed quickly, Groq's speed advantage over cloud LLM providers is significant. Cost is also much lower than GPT-4 class models.
 
-**Why Llama models?** Two models in rotation (override with `GROQ_MODELS`):
-- `llama-3.3-70b-versatile` — Primary, higher quality
-- `llama-3.1-8b-instant` — Fallback, still good enough
+**Which models?** Three in rotation (override with `GROQ_MODELS`):
+- `openai/gpt-oss-120b` — Primary, higher quality
+- `openai/gpt-oss-20b` — Fallback, still good enough
+- `qwen/qwen3.6-27b` — Last resort
 
-Round-robin between multiple API keys if provided, with automatic fallback to the next model on rate-limit (429) or model-unavailable (404 `model_not_found`) errors.
+Round-robin between multiple API keys if provided, with automatic fallback to the next model on rate-limit (429), model-unavailable (404 `model_not_found`), or unusable-answer (empty / unparseable JSON) errors. (August 2026: the Llama 3.x chat models this chain used to run were decommissioned — see [[Groq LLM]].)
 
 **What the LLM does in one call:**
 1. Generates a human-readable briefing (headline, summary, takeaway)
