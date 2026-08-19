@@ -111,6 +111,23 @@ class TestSystemPrompt:
 
 
 class TestUserMessage:
+    def test_truncation_is_logged_so_the_cap_can_be_tuned_from_data(self, caplog):
+        """The cap trades filing text for prompt room; we can't tell whether
+        that trade is worth it unless every truncation is visible."""
+        # One long item plus one long exhibit already overruns the total
+        # cap — the ordinary shape of a newsworthy 8-K.
+        filing = _filing(items=[Item("1.01", "Material Agreement",
+                                     "x " * 3_000, 2, "Contract")])
+        with caplog.at_level("WARNING"):
+            msg = _build_user_message(filing, {"EX-99.1": "y " * 4_000})
+        assert "truncated" in caplog.text
+        assert len(msg) <= briefing_module._TOTAL_TEXT_CAP + 40
+
+    def test_no_warning_when_the_source_fits(self, caplog):
+        with caplog.at_level("WARNING"):
+            _build_user_message(_item_filing(), {})
+        assert "truncated" not in caplog.text
+
     def test_amendment_includes_form_line(self):
         msg = _build_user_message(_filing(form_type="8-K/A"), {})
         assert "Form: 8-K/A" in msg

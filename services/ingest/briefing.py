@@ -305,6 +305,14 @@ def _build_user_message(filing: Filing, exhibit_plain: dict[str, str]) -> str:
         parts.append("")
 
     combined = "\n".join(parts)
+    if len(combined) > _TOTAL_TEXT_CAP:
+        # The cap is a guess at what the token ceiling leaves us, and a
+        # guess we pay for in dropped filing text. Log every time it bites
+        # so the number can be set from data instead of arithmetic.
+        log.warning(
+            "Source truncated to fit the prompt: %d chars cut to %d for %s [%s]",
+            len(combined), _TOTAL_TEXT_CAP, filing.title, filing.form_type,
+        )
     return _truncate(combined, _TOTAL_TEXT_CAP)
 
 

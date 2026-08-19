@@ -77,12 +77,37 @@ billed against the completion budget. Two consequences the code handles:
 ### Token budget
 
 Groq's per-minute token ceiling applies to a single request too: one
-oversize prompt is rejected outright, on every model in the chain. The
-prompt caps are sized to fit under it — `_TOTAL_TEXT_CAP` (16K chars of
-filing text) and `press_release._BODY_TEXT_CAP` (12K chars) plus the ~1.3K
-token system prompt and the completion budget. Raising a cap without
-checking the ceiling makes the *largest* filings — usually the interesting
-ones — silently publish facts-only.
+oversize prompt is rejected outright, on every model in the chain. So the
+whole request — system prompt + filing text + completion budget — has to
+fit under it, and the prompt caps are what keep it there.
+
+| Piece | Tokens (approx) |
+|---|---|
+| System prompt, excluding the taxonomy | ~1.3K |
+| Taxonomy leaf list + hints ([[Event Type Taxonomy]]) | ~1.3K |
+| `_TOTAL_TEXT_CAP` — 10K chars of filing text | ~2.6K |
+| `_MAX_COMPLETION_TOKENS` | 2.0K |
+| **Total** | **~7.2K of an 8K ceiling** |
+
+The press-release path is the same shape with `_BODY_TEXT_CAP` (9K chars)
+in place of the filing text. Raising a cap without redoing this arithmetic
+makes the *largest* filings — usually the interesting ones — silently
+publish facts-only.
+
+**The 8K figure is the free tier.** It is the binding constraint on how
+much filing text we can send, and nothing else here is expensive: at
+dozens of filings a day, the taxonomy's ~1.3K extra input tokens per call
+costs a rounding error in dollars. If the account moves to a paid tier the
+ceiling rises by orders of magnitude and both caps can go back up — check
+the tier before optimizing the prompt.
+
+Both caps log a warning every time they actually truncate ("Source
+truncated to fit the prompt"). Watch that line before tuning either
+number: it is the difference between a cap that costs us filing text on
+every newsworthy 8-K and one that never fires. Note that a single item
+(`_ITEM_TEXT_CAP` 6K) plus a single exhibit (`_EXHIBIT_TEXT_CAP` 8K) can
+reach 14K chars on its own, so the 10K total does bite on filings that
+attach a full press release.
 
 ### Rotation Logic
 

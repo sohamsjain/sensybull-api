@@ -167,6 +167,9 @@ Respond ONLY with valid JSON. No markdown, no commentary."""
 
 def _build_user_message(headline: str, body_text: str, company_name: str,
                         ticker: str, published: str) -> str:
+    if len(body_text) > _BODY_TEXT_CAP:
+        log.warning("Release body truncated to fit the prompt: %d chars cut to %d (%s)",
+                    len(body_text), _BODY_TEXT_CAP, company_name)
     body = body_text[:_BODY_TEXT_CAP]
     return (
         f"Subject company: {company_name}\n"
