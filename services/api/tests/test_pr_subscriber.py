@@ -231,11 +231,13 @@ class Test8KAfterPr:
 
 
 class TestEventsSurface:
-    def test_types_endpoint_includes_regulatory_clinical(self, client):
+    def test_types_endpoint_covers_the_pr_only_categories(self, client):
+        """FDA decisions and trial data reach the wire before any filing;
+        they classify under Operations & Strategy."""
         resp = client.get("/api/v1/events/types")
         assert resp.status_code == 200
         types = resp.get_json()["event_types"]
-        assert "Regulatory / Clinical" in types
+        assert "Operations & Strategy" in types
         assert types[-1] == "Other"
 
     def test_signal_type_pr_filter(self, app, client, db_session, sample_company):

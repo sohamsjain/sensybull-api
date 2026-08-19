@@ -73,10 +73,26 @@ class TestGetEvents:
     def test_events_filter_by_event_type(
         self, client, auth_headers, sample_watchlist, sample_event
     ):
+        # sample_event carries the pre-taxonomy label "Acquisition"
         resp = client.get("/api/v1/events/?event_type=Acquisition", headers=auth_headers)
         assert resp.get_json()["total"] == 1
 
-        resp = client.get("/api/v1/events/?event_type=Bankruptcy", headers=auth_headers)
+        resp = client.get("/api/v1/events/?event_type=Risk Events", headers=auth_headers)
+        assert resp.get_json()["total"] == 0
+
+    def test_filter_reaches_events_labelled_before_the_taxonomy(
+        self, client, auth_headers, sample_watchlist, sample_event
+    ):
+        """Historical rows keep their old labels forever, so the current
+        chips have to match the legacy labels that fold into them —
+        otherwise every chip shows an empty feed."""
+        resp = client.get("/api/v1/events/?event_type=Strategic Transactions",
+                          headers=auth_headers)
+        assert resp.get_json()["total"] == 1
+
+        # ...but only into the bucket it actually belongs to
+        resp = client.get("/api/v1/events/?event_type=Financial Results",
+                          headers=auth_headers)
         assert resp.get_json()["total"] == 0
 
 
@@ -143,10 +159,16 @@ class TestGetEventTypes:
         resp = client.get("/api/v1/events/types")
         assert resp.status_code == 200
         types = resp.get_json()["event_types"]
-        assert "Acquisition" in types
+        assert "Strategic Transactions" in types
         assert "Other" in types
-        # Deliberately a small list of highly material categories
-        assert len(types) <= 12
+        # One simple category per event: the taxonomy's top tier, no more
+        assert len(types) == 9
+
+    def test_no_taxonomy_leaf_or_subgroup_reaches_the_client(self, client):
+        """The end user sees one simple category, never the tiers behind
+        it — a leaf slug here would mean the collapse leaked."""
+        types = client.get("/api/v1/events/types").get_json()["event_types"]
+        assert all("_" not in t for t in types)
 
 
 class TestGetEventDetail:

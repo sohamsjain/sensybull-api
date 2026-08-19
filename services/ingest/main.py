@@ -28,6 +28,7 @@ from fetcher import (
 )
 from forms import ALLOWED_FORMS
 from parser import build_filing, strip_html
+from taxonomy import TAXONOMY_VERSION
 from press_release.fingerprint import build_fingerprints
 from press_release.issuer import build_ticker_index
 from press_release.pipeline import pr_ingest_enabled, pr_poll_loop
@@ -78,6 +79,8 @@ def _briefing_payload(briefing) -> FilingEventBriefing | None:
         investor_takeaway=briefing.investor_takeaway,
         catalysts=briefing.catalysts,
         deal_terms=briefing.deal_terms,
+        taxonomy=briefing.taxonomy,
+        taxonomy_version=TAXONOMY_VERSION if briefing.taxonomy else "",
         mode=briefing.mode,
     )
 

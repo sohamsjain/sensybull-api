@@ -36,6 +36,12 @@ class FilingEventBriefing:
     investor_takeaway: str           # 1-sentence "so what"
     catalysts: list[dict[str, str]] = field(default_factory=list)
     deal_terms: dict[str, str] = field(default_factory=dict)
+    # Taxonomy leaf slugs behind the event's simple categories, most
+    # relevant first (see services/ingest/taxonomy.py). Internal detail —
+    # the clients render event_types, never this. Empty on facts-only
+    # briefings and on events classified before the taxonomy shipped.
+    taxonomy: list[str] = field(default_factory=list)
+    taxonomy_version: str = ""
     # "llm" | "facts_only" — how the narrative was produced (see
     # services/ingest/briefing.py). facts_only means no LLM-authored text.
     # Historical events also carry "llm_verified" / "structured".
@@ -66,7 +72,8 @@ class FilingEvent:
     exhibits: list[FilingEventExhibit] = field(default_factory=list)
     briefing: FilingEventBriefing | None = None
 
-    # LLM-classified event types (e.g. ["Acquisition", "Debt / Financing"])
+    # Simple, user-facing categories from the taxonomy's top tier
+    # (e.g. ["Strategic Transactions", "Capital & Financing"])
     event_types: list[str] = field(default_factory=list)
 
     # Provenance + dedup (added with press-release ingestion) ---------------

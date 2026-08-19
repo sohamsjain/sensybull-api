@@ -3,38 +3,38 @@ materiality.py — LLM gate: does this press release merit an event?
 
 A press release publishes only when the model confirms BOTH that the
 release was issued by the company itself and that it reports a material
-business development mapping to a canonical event type other than
-"Other". There is no facts-only fallback (unlike 8-Ks, an unclassifiable
-release has no deterministic structure to fall back on and cannot pass
-the gate) — LLM failure means the release is retried next poll and
-eventually dropped by the pipeline's attempt counter.
+business development it can name in the shared event taxonomy (taxonomy.py)
+— a release no taxonomy leaf fits is not material enough to publish. There
+is no facts-only fallback (unlike 8-Ks, an unclassifiable release has no
+deterministic structure to fall back on and cannot pass the gate) — LLM
+failure means the release is retried next poll and eventually dropped by
+the pipeline's attempt counter.
 
 Reuses the Groq plumbing and validation from briefing.py; the prompt is
-PR-specific.
+PR-specific but classifies against the same taxonomy, so filings and wire
+releases land in the same simple categories.
 """
 
 import logging
 import re
 from dataclasses import dataclass
 
+import taxonomy
 from briefing import (
-    EVENT_TYPES,
     VOICE_RULES,
     _chat_json,
     _coerce_deal_terms,
-    _validate_event_types,
 )
 from models import Briefing
 
 log = logging.getLogger(__name__)
 
-_EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
-
 # Bounded by the same per-minute token ceiling as the 8-K prompt (see
 # briefing._TOTAL_TEXT_CAP): system prompt + body + completion budget has to
 # fit inside one request, and a release long enough to hit this cap has
-# said everything material well before it.
-_BODY_TEXT_CAP = 12_000
+# said everything material well before it. Trimmed when the taxonomy leaf
+# list joined the prompt — it costs ~1.2K tokens the body used to have.
+_BODY_TEXT_CAP = 9_000
 _MIN_BODY_CHARS = 400
 
 # Promotional-content prefilter — matched against the HEADLINE only
@@ -110,10 +110,13 @@ Produce a JSON object with these fields:
    happening, counterparties, key economics (amounts, share counts,
    prices), and current status. Flowing prose, not bullets.
 
-5. "primary_event_type" — the single most investor-relevant label from:
-   [{_EVENT_TYPES_STR}]
+5. "primary_category" — the ONE leaf of the TAXONOMY at the end of this
+   prompt that best names what this release reports. Answer with the slug
+   exactly as written.
 
-6. "event_types" — 1 to 3 labels from the same list (including the primary).
+6. "categories" — 1 to 3 leaves from the same taxonomy, most investor-relevant
+   first, starting with your "primary_category". Add a second or third only
+   when the release genuinely reports separate events.
 
 7. "deal_terms" — flat object of key-value pairs where stated:
    "counterparty", "deal_value", "share_count", "price_per_share",
@@ -139,6 +142,16 @@ Produce a JSON object with these fields:
 
 11. "catalysts" — [{{"date": "YYYY-MM-DD" or null, "event": "..."}}] for
     upcoming dates stated in the release. Omit if none.
+
+TAXONOMY — answer with leaf slugs only; the group headings above them are
+not valid answers:
+{taxonomy.PROMPT_BLOCK}
+
+CHOOSING A LEAF:
+- Name what HAPPENED, not how the wire framed it.
+{taxonomy.PROMPT_HINTS}
+- If genuinely nothing fits, answer "" for "primary_category" and [] for
+  "categories" — a release we cannot name is not material enough to publish.
 
 {VOICE_RULES}
 
@@ -186,12 +199,18 @@ def classify_release(headline: str, body_text: str, company_name: str,
     if not data.get("material"):
         return Drop("llm_not_material")
 
-    valid_map = {t.lower(): t for t in EVENT_TYPES}
-    raw_primary = data.get("primary_event_type", "")
-    primary = (valid_map.get(raw_primary.strip().lower(), "Other")
-               if isinstance(raw_primary, str) and raw_primary else "Other")
-    if primary == "Other":
+    # Classification: taxonomy leaves in, one simple category out. A
+    # release the model can't name in the taxonomy fails the gate — there
+    # is no facts-only fallback to publish it under.
+    raw_categories = data.get("categories")
+    leaves = taxonomy.validate_tertiaries([
+        data.get("primary_category"),
+        *(raw_categories if isinstance(raw_categories, list) else []),
+    ])
+    if not leaves:
         return Drop("llm_no_material_category")
+    event_types = taxonomy.to_labels(leaves)
+    primary = event_types[0]
 
     out_headline = str(data.get("headline") or "").strip() or headline[:100]
     summary = str(data.get("summary") or "").strip()
@@ -222,10 +241,6 @@ def classify_release(headline: str, body_text: str, company_name: str,
                     "event": str(cat["event"]),
                 })
 
-    event_types = _validate_event_types(data.get("event_types", []))
-    if primary not in event_types:
-        event_types = ([primary] + event_types)[:3]
-
     return Briefing(
         headline=out_headline,
         summary=summary,
@@ -236,5 +251,6 @@ def classify_release(headline: str, body_text: str, company_name: str,
         investor_takeaway=takeaway,
         catalysts=catalysts,
         event_types=event_types,
+        taxonomy=leaves,
         mode="llm",
     )

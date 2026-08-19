@@ -26,7 +26,7 @@ def _make_filing_json(**overrides):
         "briefing": {
             "headline": "Apple Signs Major Deal",
             "summary": "Apple entered into a material agreement.",
-            "primary_event_type": "Material Agreement",
+            "primary_event_type": "Strategic Transactions",
             "significance": "High",
             "sentiment": "Positive",
             "investor_takeaway": "Watch for details.",
@@ -34,8 +34,10 @@ def _make_filing_json(**overrides):
                 {"date": "2024-06-01", "event": "Agreement effective date"}
             ],
             "deal_terms": {"counterparty": "Acme Corp"},
+            "taxonomy": ["acquisition_agreement", "debt_issuance"],
+            "taxonomy_version": "1.0",
         },
-        "event_types": ["Material Agreement", "Acquisition"],
+        "event_types": ["Strategic Transactions", "Capital & Financing"],
     }
     base.update(overrides)
     return json.dumps(base)
@@ -71,7 +73,20 @@ class TestHandleEvent:
 
         event = FilingEvent.query.filter_by(edgar_id="test-sub-001").first()
         type_names = {et.type_name for et in event.event_types}
-        assert type_names == {"Material Agreement", "Acquisition"}
+        assert type_names == {"Strategic Transactions", "Capital & Financing"}
+
+    def test_taxonomy_detail_is_stored_but_not_a_category(self, app, db_session,
+                                                          sample_company):
+        """The taxonomy leaves ride along on the briefing for analytics;
+        only the simple categories become EventType rows the UI filters on."""
+        sio = FakeSocketIO()
+        _handle_event(app, sio, _make_filing_json())
+
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-001").first()
+        assert event.briefing_json["taxonomy"] == [
+            "acquisition_agreement", "debt_issuance"]
+        assert event.briefing_json["taxonomy_version"] == "1.0"
+        assert all("_" not in et.type_name for et in event.event_types)
 
     def test_creates_catalysts(self, app, db_session, sample_company):
         sio = FakeSocketIO()
