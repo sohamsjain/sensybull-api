@@ -97,11 +97,18 @@ def _load_model_chain() -> list[str]:
 
 _MODEL_CHAIN = _load_model_chain()
 
-# Extra request kwargs per model. The GPT-OSS models reason before they
+# Extra request fields per model. The GPT-OSS models reason before they
 # answer, and that thinking is billed against the completion budget; low
 # effort keeps latency and token use near what the old Llama chain used.
 # It costs nothing in output quality here — Groq returns the reasoning in
 # its own response field, never inside the JSON content we parse.
+#
+# These go into the request body via extra_body, never as named arguments
+# to the SDK: the pinned groq client (0.25.0) has no reasoning_effort
+# parameter and raises TypeError on an unknown kwarg before it ever calls
+# Groq, which took the whole chain down with it. extra_body passes fields
+# straight through on any SDK version, so the client and the API can adopt
+# new fields on their own schedules.
 _MODEL_KWARGS: dict[str, dict] = {
     "openai/gpt-oss-120b": {"reasoning_effort": "low"},
     "openai/gpt-oss-20b": {"reasoning_effort": "low"},
@@ -401,17 +408,20 @@ class _EmptyCompletion(RuntimeError):
 
 
 def _is_unsupported_parameter(exc: Exception, params: list[str]) -> bool:
-    """Return True if Groq rejected one of our per-model extra kwargs.
+    """Return True if our per-model extra fields are what got rejected.
 
-    _MODEL_KWARGS is a hand-maintained table, so it can drift ahead of what
-    a model actually accepts. Groq answers HTTP 400 for an unknown or
-    unsupported field; that is worth one plain retry rather than losing an
-    otherwise healthy model.
+    _MODEL_KWARGS is a hand-maintained table, so it can drift ahead of both
+    the API and the installed client. Two shapes of rejection: Groq answers
+    HTTP 400 for a field it doesn't accept, and the SDK raises TypeError
+    before any request when a field isn't in its own signature. Either is
+    worth one plain retry rather than losing an otherwise healthy model.
     """
+    message = str(exc).lower()
+    if isinstance(exc, TypeError) and "unexpected keyword argument" in message:
+        return True
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if status != 400:
         return False
-    message = str(exc).lower()
     if any(p.lower() in message for p in params):
         return True
     return any(w in message for w in ("unsupported", "unrecognized", "not supported"))
@@ -435,24 +445,40 @@ def _fallthrough_reason(exc: Exception) -> str | None:
     return None
 
 
-def _one_completion(model: str, messages: list[dict], max_tokens: int) -> dict:
-    """One JSON-mode completion from a single model."""
-    client = Groq(api_key=_next_api_key())
-    extra = dict(_MODEL_KWARGS.get(model, {}))
-    request = dict(
+def _request_kwargs(model: str, messages: list[dict], max_tokens: int,
+                    *, with_extras: bool = True) -> dict:
+    """Every argument one completion call passes to the SDK.
+
+    Built in one place so a test can bind it against the installed client's
+    real signature — mocked clients accept anything, which is exactly how a
+    kwarg the SDK didn't have reached production.
+    """
+    kwargs = dict(
         model=model,
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
         messages=messages,
     )
+    extra = _MODEL_KWARGS.get(model) if with_extras else None
+    if extra:
+        kwargs["extra_body"] = dict(extra)
+    return kwargs
+
+
+def _one_completion(model: str, messages: list[dict], max_tokens: int) -> dict:
+    """One JSON-mode completion from a single model."""
+    client = Groq(api_key=_next_api_key())
+    request = _request_kwargs(model, messages, max_tokens)
     try:
-        response = client.chat.completions.create(**request, **extra)
+        response = client.chat.completions.create(**request)
     except Exception as exc:
+        extra = request.get("extra_body")
         if not extra or not _is_unsupported_parameter(exc, list(extra)):
             raise
         log.warning("Model %s rejected %s, retrying without it",
                     model, ", ".join(sorted(extra)))
-        response = client.chat.completions.create(**request)
+        response = client.chat.completions.create(
+            **_request_kwargs(model, messages, max_tokens, with_extras=False))
 
     content = (response.choices[0].message.content or "").strip()
     if not content:
