@@ -28,6 +28,15 @@ The repo includes a `render.yaml` blueprint that provisions everything:
    - `GROQ_API_KEYS` — comma-separated Groq API keys (on ingest service)
 6. The API service runs `flask db upgrade && python main.py` on startup — migrations run automatically.
 
+### Keep plans in sync with the live resources
+
+Render refuses a blueprint sync that would *downgrade* a database, failing with
+`databases[0].plan cannot downgrade database from <live plan> to <blueprint plan>`
+and leaving the whole blueprint unsynced. If you change a resource's plan in the
+dashboard, mirror it in `render.yaml` in the same sitting — `sensybull-db` is on
+`basic-256mb` (the free Postgres tier expires after 30 days). Downgrades have to
+be done from the dashboard, not the blueprint.
+
 ### Verify end-to-end
 
 1. Hit `https://<your-api>.onrender.com/health` — should return `{"status": "ok", "api": "ok", "redis": "ok", "database": "ok"}`

@@ -1,6 +1,9 @@
 databases:
   - name: sensybull-db
-    plan: free
+    # Must match (or exceed) the live instance's plan — Render rejects a
+    # blueprint sync that would downgrade a database. The free tier expires
+    # after 30 days, so sensybull-db lives on basic-256mb.
+    plan: basic-256mb
     databaseName: sensybull
     user: sensybull
     ipAllowList: []  # only internal access
