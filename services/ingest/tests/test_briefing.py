@@ -1,5 +1,6 @@
 """Briefing prompt rendering, generation, and fallbacks (Groq mocked)."""
 
+import inspect
 import json
 from unittest.mock import MagicMock, patch
 
@@ -404,8 +405,10 @@ class TestPerModelKwargs:
             generate_briefing(filing, {})
         kwargs = client.chat.completions.create.call_args.kwargs
         expected = briefing_module._MODEL_KWARGS.get(briefing_module._MODEL_CHAIN[0], {})
-        for key, value in expected.items():
-            assert kwargs[key] == value
+        # Extras ride in extra_body, never as named SDK arguments.
+        assert kwargs.get("extra_body", {}) == expected
+        for key in expected:
+            assert key not in kwargs
 
     def test_rejected_extra_kwarg_retries_plain_on_same_model(self):
         """A 400 on our own extras must not cost us the model."""
@@ -434,13 +437,68 @@ class TestPerModelKwargs:
         assert result.mode == "llm"
         calls = client.chat.completions.create.call_args_list
         assert [c.kwargs["model"] for c in calls] == [briefing_module._MODEL_CHAIN[0]] * 2
-        assert "reasoning_effort" in calls[0].kwargs
-        assert "reasoning_effort" not in calls[1].kwargs
+        assert calls[0].kwargs["extra_body"] == {"reasoning_effort": "low"}
+        assert "extra_body" not in calls[1].kwargs
+
+    def test_sdk_typeerror_on_extras_retries_plain(self):
+        """The outage this guards: an SDK too old for a field raises
+        TypeError locally, before any HTTP call, and used to take the whole
+        chain down."""
+        filing = _item_filing()
+        response = MagicMock()
+        response.choices[0].message.content = json.dumps({
+            "headline": "SmallCap signs a five-year supply deal",
+            "summary": "A supply agreement was signed with Widget Partners LLC.",
+            "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"],
+            "significance": "Medium",
+            "sentiment": "Positive",
+            "investor_takeaway": "Supports expansion.",
+        })
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            TypeError("Completions.create() got an unexpected keyword "
+                      "argument 'reasoning_effort'"),
+            response,
+        ]
+        with patch.object(briefing_module, "_MODEL_KWARGS",
+                          {briefing_module._MODEL_CHAIN[0]: {"reasoning_effort": "low"}}), \
+             patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(filing, {})
+        assert result.mode == "llm"
+        calls = client.chat.completions.create.call_args_list
+        assert [c.kwargs["model"] for c in calls] == [briefing_module._MODEL_CHAIN[0]] * 2
+        assert "extra_body" not in calls[1].kwargs
 
     def test_ordinary_400_is_not_treated_as_our_parameter(self):
         exc = _FakeGroqError("context length exceeded", status_code=400,
                              code="invalid_request_error")
         assert not briefing_module._is_unsupported_parameter(exc, ["reasoning_effort"])
+
+
+class TestRequestMatchesInstalledSDK:
+    """Every other test mocks Groq, and a MagicMock accepts any keyword —
+    which is how a kwarg the installed client had never heard of shipped
+    and failed on the first live filing. These bind the real signature."""
+
+    def _create_signature(self):
+        from groq.resources.chat.completions import Completions
+        return inspect.signature(Completions.create)
+
+    def test_every_model_request_binds_against_the_sdk(self):
+        messages = [{"role": "user", "content": "hi"}]
+        signature = self._create_signature()
+        for model in briefing_module._DEFAULT_MODEL_CHAIN:
+            kwargs = briefing_module._request_kwargs(model, messages, 128)
+            signature.bind(None, **kwargs)   # None = self; raises on unknown kwargs
+
+    def test_plain_retry_request_binds_against_the_sdk(self):
+        messages = [{"role": "user", "content": "hi"}]
+        signature = self._create_signature()
+        for model in briefing_module._DEFAULT_MODEL_CHAIN:
+            kwargs = briefing_module._request_kwargs(model, messages, 128,
+                                                     with_extras=False)
+            signature.bind(None, **kwargs)
 
 
 class TestUnusableAnswers:

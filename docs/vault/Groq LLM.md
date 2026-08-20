@@ -66,9 +66,19 @@ The GPT-OSS models think before they answer, and those reasoning tokens are
 billed against the completion budget. Two consequences the code handles:
 
 - `reasoning_effort: "low"` is sent per-model (`_MODEL_KWARGS`), keeping
-  latency and token use near the old Llama numbers. If Groq ever stops
-  accepting the field, the 400 triggers one plain retry on the same model
-  rather than losing it.
+  latency and token use near the old Llama numbers. It goes through
+  `extra_body`, never as a named SDK argument: the pinned client
+  (groq 0.25.0) has no such parameter and raises `TypeError` before it ever
+  calls Groq — which is exactly how the first deploy of this chain took
+  every briefing down. `extra_body` passes fields straight into the request
+  body on any client version. Either rejection, the SDK's `TypeError` or an
+  HTTP 400 from Groq, triggers one plain retry on the same model rather
+  than losing it.
+- Mocked clients accept any keyword, so `_request_kwargs()` builds the call
+  in one place and tests bind it against the installed SDK's real signature
+  (`TestRequestMatchesInstalledSDK`). Add a per-model field there, not
+  inline at the call site, or the mock will green-light something the
+  client cannot send.
 - The completion budget is 2,048 tokens (`_MAX_COMPLETION_TOKENS`), well
   above the ~600 the JSON answer needs, so reasoning can't truncate it.
   The reasoning itself comes back in its own response field, never inside
