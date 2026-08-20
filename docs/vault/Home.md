@@ -25,6 +25,7 @@ Two decoupled microservices talk only through a [[Redis Pub-Sub Contract]]. The 
 | What technologies we use and why | [[Technology Decisions]] |
 | How filings get parsed and enriched | [[Ingest Pipeline Deep Dive]] |
 | How real-time push works | [[Real-Time System]] |
+| How price/chart data works | [[Market Data Layer]] |
 | The data model | [[Data Model]] |
 | Authentication & security | [[Authentication System]] |
 | The React frontend | [[Web Frontend]] |
