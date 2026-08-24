@@ -64,7 +64,7 @@ class FilingEvent(BaseModel):
     # Shape: {headline, bullets, company_context}
     briefing_json: so.Mapped[Optional[dict]] = so.mapped_column(sa.JSON, nullable=True)
 
-    # LLM-classified event types, e.g. ["Acquisition", "Debt / Financing"]
+    # Simple, user-facing categories, e.g. ["Strategic Transactions", "Capital & Financing"]
     event_types_json: so.Mapped[Optional[list]] = so.mapped_column(sa.JSON, nullable=True)
 
     # Content fingerprints for cross-source dedup (see

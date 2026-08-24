@@ -179,7 +179,9 @@ OPENAPI_SPEC = {
                 "properties": {
                     "headline": {"type": "string"},
                     "summary": {"type": "string"},
-                    "primary_event_type": {"type": "string"},
+                    "primary_event_type": {"type": "string", "example": "Strategic Transactions", "description": "The single simple category shown to the end user"},
+                    "taxonomy": {"type": "array", "items": {"type": "string"}, "example": ["merger_agreement", "debt_issuance"], "description": "Internal taxonomy leaf slugs behind the categories — not for display"},
+                    "taxonomy_version": {"type": "string", "example": "1.0"},
                     "significance": {"type": "string", "enum": ["High", "Medium", "Low"]},
                     "sentiment": {"type": "string", "enum": ["Positive", "Negative", "Neutral", "Mixed"]},
                     "investor_takeaway": {"type": "string"},
@@ -214,7 +216,7 @@ OPENAPI_SPEC = {
                     "items": {"type": "array", "items": {"$ref": "#/components/schemas/BriefingItem"}},
                     "exhibits": {"type": "array", "items": {"$ref": "#/components/schemas/Exhibit"}},
                     "briefing": {"$ref": "#/components/schemas/Briefing", "nullable": True},
-                    "event_types": {"type": "array", "items": {"type": "string"}, "example": ["Acquisition", "Debt / Financing"]},
+                    "event_types": {"type": "array", "items": {"type": "string"}, "example": ["Strategic Transactions", "Capital & Financing"]},
                     "catalysts": {
                         "type": "array",
                         "items": {
@@ -267,7 +269,7 @@ OPENAPI_SPEC = {
             "EventType": {
                 "name": "event_type", "in": "query",
                 "schema": {"type": "string"},
-                "description": "Filter by canonical event type label (e.g. 'Acquisition')",
+                "description": "Filter by canonical event type label (e.g. 'Strategic Transactions'); legacy labels that fold into it match too",
             },
         },
     },

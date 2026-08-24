@@ -23,11 +23,26 @@ def _user_company_ids(user_id: str) -> set[str]:
     return {c.id for wl in watchlists for c in wl.companies}
 
 
+def _matching_type_names(event_type: str) -> list[str]:
+    """Every stored label that should answer a filter on `event_type`.
+
+    That is the label itself plus any legacy label folding into it, so the
+    historical feed stays reachable through the current filter chips.
+    """
+    names = [event_type]
+    names += [old for old, new in LEGACY_EVENT_TYPES.items() if new == event_type]
+    return names
+
+
 def _apply_event_type_filter(q, event_type: str | None):
     """Filter by event_type using the EventType relationship."""
     if not event_type:
         return q
-    return q.filter(FilingEvent.event_types.any(EventType.type_name == event_type))
+    return q.filter(
+        FilingEvent.event_types.any(
+            EventType.type_name.in_(_matching_type_names(event_type))
+        )
+    )
 
 
 @events_bp.route("/", methods=["GET"])
@@ -38,7 +53,7 @@ def get_events():
     per_page    = request.args.get("per_page", 50, type=int)
     max_tier    = request.args.get("max_tier", 3, type=int)    # filter: only <= this tier
     signal_type = request.args.get("signal_type")              # "8-K", "earnings", etc.
-    event_type  = request.args.get("event_type")               # e.g. "Acquisition"
+    event_type  = request.args.get("event_type")               # e.g. "Strategic Transactions"
 
     company_ids = _user_company_ids(user_id)
     if not company_ids:
@@ -108,16 +123,37 @@ def get_public_event(event_id):
     return jsonify({"event": event.to_ws_payload()})
 
 
-# Mirrors services/ingest/briefing.py EVENT_TYPES — keep the two in sync.
-# Deliberately a small list of highly material categories (July 2026
-# rollback: 8-K is the only ingested form; the long taxonomy went with the
-# other forms). "Regulatory / Clinical" added with press-release ingestion
-# (FDA decisions / trial results reach the wire before any filing).
+# The simple, user-facing categories — the top tier of the ingest event
+# taxonomy (services/ingest/taxonomy.py PRIMARY_LABELS), which is the only
+# tier the end user ever sees. Ingest classifies each filing against the
+# taxonomy's ~120 specific leaf events and collapses the answer onto these
+# labels before publishing. Mirrors taxonomy.CATEGORIES — keep the two in
+# sync; adding a label here adds a filter chip to the feed.
 EVENT_TYPES = [
-    "Acquisition", "Material Agreement", "Earnings", "Bankruptcy",
-    "Debt / Financing", "Restructuring", "Leadership Change", "Delisting",
-    "Restatement", "Cybersecurity Incident", "Regulatory / Clinical", "Other",
+    "Leadership & Governance", "Financial Results", "Strategic Transactions",
+    "Capital & Financing", "Operations & Strategy", "Risk Events",
+    "Regulatory & Compliance", "Shareholder Activity", "Other",
 ]
+
+# Events classified before the taxonomy shipped carry the old 12-label
+# vocabulary and their rows are never rewritten, so a filter on a current
+# label has to match the legacy labels that fold into it too — otherwise
+# every chip shows an empty feed until enough new events accumulate.
+# Mirrors services/ingest/taxonomy.py LEGACY_LABELS and sensybull-web
+# src/hooks/use-events.ts — keep the three in sync.
+LEGACY_EVENT_TYPES = {
+    "Acquisition":            "Strategic Transactions",
+    "Material Agreement":     "Operations & Strategy",
+    "Earnings":               "Financial Results",
+    "Bankruptcy":             "Risk Events",
+    "Debt / Financing":       "Capital & Financing",
+    "Restructuring":          "Operations & Strategy",
+    "Leadership Change":      "Leadership & Governance",
+    "Delisting":              "Regulatory & Compliance",
+    "Restatement":            "Financial Results",
+    "Cybersecurity Incident": "Risk Events",
+    "Regulatory / Clinical":  "Operations & Strategy",
+}
 
 
 @events_bp.route("/types", methods=["GET"])

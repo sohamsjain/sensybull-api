@@ -27,7 +27,14 @@ class Briefing:
     sentiment: str                   # "Positive" / "Negative" / "Neutral" / "Mixed"
     investor_takeaway: str           # 1-sentence "so what" for a PM
     catalysts: list[dict[str, str]]  # [{"date": "2026-07-15", "event": "Shareholder vote"}]
+    # Simple, user-facing categories (taxonomy.CATEGORIES) — the primary
+    # first. This is the ONLY classification the end user sees.
     event_types: list[str] = field(default_factory=lambda: ["Other"])
+    # Taxonomy leaf slugs behind those categories, most relevant first
+    # (e.g. ["ceo_departure", "executive_compensation_change"]). Internal:
+    # kept for analytics and routing, never displayed. Empty on facts-only
+    # briefings, which make no leaf-level claim.
+    taxonomy: list[str] = field(default_factory=list)
     # "llm" (LLM-authored narrative) or "facts_only" (deterministic
     # fallback, no LLM content)
     mode: str = "llm"

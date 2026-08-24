@@ -3,7 +3,7 @@
 EventType — structured event classification linked to a FilingEvent.
 
 Each FilingEvent can have 1-3 EventType rows. The `attributes` JSON column
-stores flexible, event-specific data (e.g. deal terms for an Acquisition)
+stores flexible, event-specific data (e.g. deal terms for a merger)
 without requiring schema migrations.
 """
 from typing import Optional

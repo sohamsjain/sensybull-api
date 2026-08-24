@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 import seen as seen_store
 from events import FilingEvent, FilingEventBriefing
+from taxonomy import TAXONOMY_VERSION
 from parser import strip_html
 from publisher import publish_filing
 
@@ -221,6 +222,8 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
             investor_takeaway=briefing.investor_takeaway,
             catalysts=briefing.catalysts,
             deal_terms=briefing.deal_terms,
+            taxonomy=briefing.taxonomy,
+            taxonomy_version=TAXONOMY_VERSION if briefing.taxonomy else "",
             mode=briefing.mode,
         ),
         event_types=briefing.event_types,

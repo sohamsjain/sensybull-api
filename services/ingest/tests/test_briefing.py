@@ -5,6 +5,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import briefing as briefing_module
+import taxonomy
 from briefing import (
     EVENT_TYPES,
     VOICE_RULES,
@@ -88,16 +89,46 @@ class TestSystemPrompt:
         names the subject company instead."""
         assert "perspective" not in _system_prompt("8-K").lower()
 
-    def test_event_types_are_the_narrow_material_list(self):
-        assert "Other" in EVENT_TYPES
-        assert len(EVENT_TYPES) <= 12
-        # Rolled-back multi-form categories must be gone
-        for gone in ("Insider Buying", "Tender Offer", "Activist Initial",
-                     "Going Dark", "Late Filing"):
-            assert gone not in EVENT_TYPES
+    def test_event_types_are_the_taxonomy_top_tier(self):
+        """The user-facing list is the taxonomy's primary tier plus Other —
+        one simple category per event, never the leaf or the middle tier."""
+        assert EVENT_TYPES == [*taxonomy.PRIMARY_LABELS.values(), "Other"]
+        assert len(EVENT_TYPES) == 9
+
+    def test_prompt_offers_leaves_not_categories(self):
+        """The model classifies against the specific leaves; the simple
+        categories are derived afterwards and never shown to it."""
+        prompt = _system_prompt("8-K")
+        assert "ceo_departure" in prompt
+        assert "covenant_violation" in prompt
+        assert '"primary_category"' in prompt
+        # The display labels would invite the model to answer with a bucket
+        assert "Strategic Transactions" not in prompt
+
+    def test_prompt_carries_the_disambiguation_hints(self):
+        prompt = _system_prompt("8-K")
+        assert "settlement_agreement" in prompt
+        assert "guidance_withdrawal" in prompt
 
 
 class TestUserMessage:
+    def test_truncation_is_logged_so_the_cap_can_be_tuned_from_data(self, caplog):
+        """The cap trades filing text for prompt room; we can't tell whether
+        that trade is worth it unless every truncation is visible."""
+        # One long item plus one long exhibit already overruns the total
+        # cap — the ordinary shape of a newsworthy 8-K.
+        filing = _filing(items=[Item("1.01", "Material Agreement",
+                                     "x " * 3_000, 2, "Contract")])
+        with caplog.at_level("WARNING"):
+            msg = _build_user_message(filing, {"EX-99.1": "y " * 4_000})
+        assert "truncated" in caplog.text
+        assert len(msg) <= briefing_module._TOTAL_TEXT_CAP + 40
+
+    def test_no_warning_when_the_source_fits(self, caplog):
+        with caplog.at_level("WARNING"):
+            _build_user_message(_item_filing(), {})
+        assert "truncated" not in caplog.text
+
     def test_amendment_includes_form_line(self):
         msg = _build_user_message(_filing(form_type="8-K/A"), {})
         assert "Form: 8-K/A" in msg
@@ -213,8 +244,8 @@ class TestCoerceDealTerms:
         client = _mock_groq({
             "headline": "SmallCap agrees to a debt raise of up to $11.5B",
             "summary": "SmallCap Industries Inc. is issuing senior notes.",
-            "primary_event_type": "Debt / Financing",
-            "event_types": ["Debt / Financing"],
+            "primary_category": "debt_issuance",
+            "categories": ["debt_issuance"],
             "significance": "Medium",
             "sentiment": "Neutral",
             "deal_terms": {"deal_value": {"$sum": "11500000000"},
@@ -235,8 +266,10 @@ class TestFactsOnlyBriefing:
         ])
         b = facts_only_briefing(filing)
         assert b.headline == "8-K/A filed: Contract"
-        assert b.primary_event_type == "Material Agreement"
+        assert b.primary_event_type == "Strategic Transactions"
         assert b.mode == "facts_only"
+        # No LLM ran, so no leaf-level claim is made
+        assert b.taxonomy == []
 
     def test_item_type_mapping_deterministic(self):
         filing = _filing(form_type="8-K", items=[
@@ -244,11 +277,10 @@ class TestFactsOnlyBriefing:
             Item("5.02", "Departure of Directors", "", 2, "Leadership"),
         ])
         b = facts_only_briefing(filing)
-        assert b.event_types == ["Earnings", "Leadership Change"]
+        assert b.event_types == ["Financial Results", "Leadership & Governance"]
 
     def test_item_mapping_stays_canonical(self):
-        from briefing import _ITEM_EVENT_TYPES
-        for number, label in _ITEM_EVENT_TYPES.items():
+        for number, label in taxonomy.ITEM_CATEGORIES.items():
             assert label in EVENT_TYPES, f"{number} maps to non-canonical {label!r}"
 
     def test_significance_from_tier(self):
@@ -257,7 +289,7 @@ class TestFactsOnlyBriefing:
         ])
         b = facts_only_briefing(filing)
         assert b.significance == "High"
-        assert b.primary_event_type == "Bankruptcy"
+        assert b.primary_event_type == "Risk Events"
 
     def test_no_items_falls_back_to_other(self):
         b = facts_only_briefing(_filing(form_type="8-K"))
@@ -273,8 +305,8 @@ class TestGenerateBriefing:
             "summary": "SmallCap Industries Inc. entered into a supply "
                        "agreement with Widget Partners LLC for 2,150,000 "
                        "units, worth $4,300,000 over five years.",
-            "primary_event_type": "Material Agreement",
-            "event_types": ["Material Agreement"],
+            "primary_category": "supply_or_distribution_agreement",
+            "categories": ["supply_or_distribution_agreement"],
             "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "Supports the expansion plans.",
@@ -285,7 +317,9 @@ class TestGenerateBriefing:
         with patch.object(briefing_module, "Groq", return_value=client):
             result = generate_briefing(filing, {})
         assert result.mode == "llm"
-        assert result.primary_event_type == "Material Agreement"
+        assert result.primary_event_type == "Operations & Strategy"
+        # the specific leaf is kept alongside the simple category
+        assert result.taxonomy == ["supply_or_distribution_agreement"]
         assert result.significance == "Medium"
         assert result.deal_terms["counterparty"] == "Widget Partners LLC"
         assert result.catalysts == [{"date": None, "event": "Expansion milestones"}]
@@ -298,8 +332,8 @@ class TestGenerateBriefing:
         client = _mock_groq({
             "headline": "SmallCap signs a supply deal",
             "summary": "A supply agreement was signed.",
-            "primary_event_type": "Blockbuster Deal",   # not canonical
-            "event_types": ["Blockbuster Deal", "material agreement"],
+            "primary_category": "blockbuster_deal",     # not a taxonomy leaf
+            "categories": ["blockbuster_deal", "SUPPLY_OR_DISTRIBUTION_AGREEMENT"],
             "significance": "Massive",                  # not canonical
             "sentiment": "Euphoric",                    # not canonical
             "investor_takeaway": "",
@@ -307,8 +341,10 @@ class TestGenerateBriefing:
         with patch.object(briefing_module, "Groq", return_value=client):
             result = generate_briefing(filing, {})
         assert result.mode == "llm"
-        assert result.primary_event_type == "Other"
-        assert result.event_types == ["Material Agreement"]  # case-normalized
+        # The unknown leaf is dropped; the recognizable one still classifies
+        assert result.primary_event_type == "Operations & Strategy"
+        assert result.event_types == ["Operations & Strategy"]
+        assert result.taxonomy == ["supply_or_distribution_agreement"]
         assert result.significance == "Medium"
         assert result.sentiment == "Neutral"
 
@@ -325,8 +361,8 @@ class TestGenerateBriefing:
                           side_effect=RuntimeError("api down")):
             result = generate_briefing(filing, {})
         assert result.mode == "facts_only"
-        assert result.primary_event_type == "Material Agreement"
-        assert result.event_types == ["Material Agreement"]
+        assert result.primary_event_type == "Strategic Transactions"
+        assert result.event_types == ["Strategic Transactions"]
 
     def test_failure_8k_falls_back_to_other(self):
         filing = _filing(form_type="8-K", items=[Item(
@@ -348,8 +384,8 @@ class TestGenerateBriefing:
         client = _mock_groq({
             "headline": "",
             "summary": "A supply agreement was signed.",
-            "primary_event_type": "Material Agreement",
-            "event_types": ["Material Agreement"],
+            "primary_category": "supply_or_distribution_agreement",
+            "categories": ["supply_or_distribution_agreement"],
             "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "",
@@ -395,8 +431,8 @@ class TestPerModelKwargs:
         client = _mock_groq({
             "headline": "SmallCap signs a five-year supply deal",
             "summary": "A supply agreement was signed with Widget Partners LLC.",
-            "primary_event_type": "Material Agreement",
-            "event_types": ["Material Agreement"],
+            "primary_category": "supply_or_distribution_agreement",
+            "categories": ["supply_or_distribution_agreement"],
             "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "Supports expansion.",
@@ -416,8 +452,8 @@ class TestPerModelKwargs:
         good = {
             "headline": "SmallCap signs a five-year supply deal",
             "summary": "A supply agreement was signed with Widget Partners LLC.",
-            "primary_event_type": "Material Agreement",
-            "event_types": ["Material Agreement"],
+            "primary_category": "supply_or_distribution_agreement",
+            "categories": ["supply_or_distribution_agreement"],
             "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "Supports expansion.",
@@ -510,8 +546,8 @@ class TestUnusableAnswers:
         response.choices[0].message.content = json.dumps({
             "headline": "SmallCap signs a five-year supply deal",
             "summary": "A supply agreement was signed with Widget Partners LLC.",
-            "primary_event_type": "Material Agreement",
-            "event_types": ["Material Agreement"],
+            "primary_category": "supply_or_distribution_agreement",
+            "categories": ["supply_or_distribution_agreement"],
             "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "Supports expansion.",
@@ -585,8 +621,8 @@ class TestModelFallback:
         good = {
             "headline": "SmallCap signs a five-year supply deal worth $4,300,000",
             "summary": "A supply agreement was signed with Widget Partners LLC.",
-            "primary_event_type": "Material Agreement",
-            "event_types": ["Material Agreement"],
+            "primary_category": "supply_or_distribution_agreement",
+            "categories": ["supply_or_distribution_agreement"],
             "significance": "Medium",
             "sentiment": "Positive",
             "investor_takeaway": "Supports expansion.",
@@ -603,7 +639,7 @@ class TestModelFallback:
         with patch.object(briefing_module, "Groq", return_value=client):
             result = generate_briefing(filing, {})
         assert result.mode == "llm"
-        assert result.primary_event_type == "Material Agreement"
+        assert result.primary_event_type == "Operations & Strategy"
         # Primary failed with 404, then the fallback model was tried.
         models = [c.kwargs["model"]
                   for c in client.chat.completions.create.call_args_list]
@@ -617,7 +653,7 @@ class TestModelFallback:
         with patch.object(briefing_module, "Groq", return_value=client):
             result = generate_briefing(filing, {})
         assert result.mode == "facts_only"
-        assert result.primary_event_type == "Material Agreement"
+        assert result.primary_event_type == "Strategic Transactions"
         # Every model in the chain was attempted before giving up.
         assert (client.chat.completions.create.call_count
                 == len(briefing_module._MODEL_CHAIN))

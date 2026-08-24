@@ -6,6 +6,11 @@ single LLM pass: the model is shown the filing text and asked for a
 headline, summary, classification, and key dates. Prompt guidance tells it
 to stick to the filing text.
 
+Classification runs against the three-tier taxonomy in taxonomy.py: the
+model names the specific leaf event ("ceo_departure", "covenant_violation")
+and we collapse that to the ONE simple category the end user sees. The leaf
+is kept on the briefing for analytics; it is never displayed.
+
 If the LLM call fails, the model reports insufficient content, or the
 filing has too little text to summarize, the event publishes with a
 deterministic facts-only briefing instead (form type, item categories,
@@ -20,6 +25,7 @@ import threading
 
 from groq import Groq
 
+import taxonomy
 from forms import LLM_HINTS
 from models import Briefing, Filing
 from parser import strip_html
@@ -51,11 +57,20 @@ _ITEM_TEXT_CAP = 6_000
 _EXHIBIT_TEXT_CAP = 8_000
 # Sized against the per-minute token ceiling of the models we call (8K TPM
 # on the current Groq tier). A request that alone exceeds TPM is rejected
-# outright, so the whole prompt has to fit: ~1.3K tokens of system prompt +
-# this cap (~4.2K tokens at ~3.8 chars/token) + the completion budget below
-# leaves room to spare. Raising it makes the largest filings 429 on every
-# model in the chain and publish facts-only.
-_TOTAL_TEXT_CAP = 16_000
+# outright, so the whole prompt has to fit, at ~3.8 chars/token:
+#
+#   ~2.6K  system prompt (carries the taxonomy leaf list — taxonomy.PROMPT_BLOCK)
+#   ~2.6K  this cap
+#    2.0K  the completion budget below
+#   ------
+#   ~7.3K  of the 8K ceiling
+#
+# It was 16K chars before the taxonomy joined the prompt; the leaf list is
+# worth the source text it costs, since classification is what the whole
+# product surface is built on and typical 8-K item text lands well under
+# this cap. Raising it makes the largest filings 429 on every model in the
+# chain and publish facts-only.
+_TOTAL_TEXT_CAP = 10_000
 
 # Completion budget per call. Reasoning models bill their thinking against
 # this budget, so it sits well above the ~600 tokens the JSON answer needs;
@@ -114,44 +129,12 @@ _MODEL_KWARGS: dict[str, dict] = {
     "openai/gpt-oss-20b": {"reasoning_effort": "low"},
 }
 
-# Canonical event types for classification — deliberately a SMALL list of
-# highly material categories (July 2026: the long multi-form taxonomy was
-# rolled back along with non-8-K ingestion). The LLM picks 1-3 from this
-# list (or "Other" as fallback).
-EVENT_TYPES = [
-    "Acquisition",
-    "Material Agreement",
-    "Earnings",
-    "Bankruptcy",
-    "Debt / Financing",
-    "Restructuring",
-    "Leadership Change",
-    "Delisting",
-    "Restatement",
-    "Cybersecurity Incident",
-    "Regulatory / Clinical",
-    "Other",
-]
-# NOTE: this list is mirrored in services/api/app/routes/events.py — keep in sync.
-
-_EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
-
-# Deterministic 8-K item → event type mapping for facts-only briefings.
-# Only unambiguous items are mapped; everything else falls back to "Other".
-# Labels must exist in EVENT_TYPES.
-_ITEM_EVENT_TYPES: dict[str, str] = {
-    "1.01": "Material Agreement",
-    "1.02": "Material Agreement",
-    "1.03": "Bankruptcy",
-    "1.05": "Cybersecurity Incident",
-    "2.01": "Acquisition",
-    "2.02": "Earnings",
-    "2.03": "Debt / Financing",
-    "2.05": "Restructuring",
-    "3.01": "Delisting",
-    "4.02": "Restatement",
-    "5.02": "Leadership Change",
-}
+# The simple, user-facing categories. The LLM is never shown this list —
+# it classifies against the taxonomy's specific leaf events (taxonomy.py)
+# and we collapse the answer onto these labels, which is all the end user
+# ever sees. The list mirrors services/api/app/routes/events.py, which
+# backs GET /events/types — keep the two in sync.
+EVENT_TYPES = taxonomy.CATEGORIES
 
 _TIER_SIGNIFICANCE = {1: "High", 2: "Medium", 3: "Low"}
 
@@ -196,10 +179,15 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    procedural status (vote pending, effective date, etc.).
    Write flowing prose, not bullet points.
 
-3. "primary_event_type" — the single MOST investor-relevant label from this list:
-   [{_EVENT_TYPES_STR}]
+3. "primary_category" — the ONE leaf of the TAXONOMY at the end of this
+   prompt that best names what this filing reports. Answer with the slug
+   exactly as written.
 
-4. "event_types" — 1 to 3 labels from the same list (including the primary).
+4. "categories" — 1 to 3 leaves from the same taxonomy, most investor-relevant
+   first, starting with your "primary_category". Add a second or third only
+   when the filing genuinely reports separate events (e.g. a merger agreement
+   AND the debt financing that funds it) — not to hedge one event across
+   neighbouring leaves.
 
 5. "deal_terms" — a flat object of key-value pairs extracting structured data.
    Every value MUST be a plain, display-ready string — never a nested
@@ -241,6 +229,16 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    Each entry: {{"date": "YYYY-MM-DD" or null, "event": "description"}}.
    Include: vote dates, tender deadlines, expected close dates, effective dates,
    record dates. Omit this field entirely if no catalysts are mentioned.
+
+TAXONOMY — answer with leaf slugs only; the group headings above them are
+not valid answers:
+{taxonomy.PROMPT_BLOCK}
+
+CHOOSING A LEAF:
+- Name what HAPPENED, not the SEC item number it was filed under.
+{taxonomy.PROMPT_HINTS}
+- If genuinely nothing fits, answer "" for "primary_category" and [] for
+  "categories" rather than forcing a wrong leaf.
 
 {VOICE_RULES}
 {{form_guidance}}
@@ -314,20 +312,33 @@ def _build_user_message(filing: Filing, exhibit_plain: dict[str, str]) -> str:
         parts.append("")
 
     combined = "\n".join(parts)
+    if len(combined) > _TOTAL_TEXT_CAP:
+        # The cap is a guess at what the token ceiling leaves us, and a
+        # guess we pay for in dropped filing text. Log every time it bites
+        # so the number can be set from data instead of arithmetic.
+        log.warning(
+            "Source truncated to fit the prompt: %d chars cut to %d for %s [%s]",
+            len(combined), _TOTAL_TEXT_CAP, filing.title, filing.form_type,
+        )
     return _truncate(combined, _TOTAL_TEXT_CAP)
 
 
 def _validate_event_types(raw: list) -> list[str]:
-    """Keep only labels that exist in the canonical list, capped at 3."""
+    """Keep only display labels that exist in the canonical list, capped at 3.
+
+    Classification answers arrive as taxonomy leaves, not labels, so this is
+    only reached for callers that produce labels directly (facts-only
+    briefings, legacy payloads).
+    """
     valid = {t.lower(): t for t in EVENT_TYPES}
     out: list[str] = []
     for label in raw:
         if not isinstance(label, str):
             continue
         canonical = valid.get(label.strip().lower())
-        if canonical:
+        if canonical and canonical not in out:
             out.append(canonical)
-    return out[:3] or ["Other"]
+    return out[:3] or [taxonomy.OTHER]
 
 
 def _coerce_deal_terms(raw: object) -> dict[str, str]:
@@ -521,13 +532,17 @@ def facts_only_briefing(filing: Filing) -> Briefing:
     source text, LLM failure, or the model reporting insufficient content.
     Every field here is mechanical — form type, item categories from the
     8-K item number registry, tier-derived significance.
+
+    No taxonomy leaf is claimed: without the LLM the SEC item number is all
+    we know, and it maps only to the coarse category, never to a specific
+    event (taxonomy.ITEM_CATEGORIES).
     """
     mapped = []
     for it in filing.items:
-        t = _ITEM_EVENT_TYPES.get(it.number)
+        t = taxonomy.ITEM_CATEGORIES.get(it.number)
         if t and t not in mapped:
             mapped.append(t)
-    event_types = mapped[:3] or ["Other"]
+    event_types = mapped[:3] or [taxonomy.OTHER]
 
     categories = []
     for it in filing.items:
@@ -546,7 +561,7 @@ def facts_only_briefing(filing: Filing) -> Briefing:
         headline=headline, summary="", primary_event_type=event_types[0],
         deal_terms={}, significance=significance, sentiment="Neutral",
         investor_takeaway="", catalysts=[], event_types=event_types,
-        mode="facts_only",
+        taxonomy=[], mode="facts_only",
     )
 
 
@@ -596,11 +611,15 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
     summary = str(data.get("summary") or "").strip()
     takeaway = str(data.get("investor_takeaway") or "").strip()
 
-    # Validate primary_event_type against canonical list
-    raw_primary = data.get("primary_event_type", "")
-    valid_map = {t.lower(): t for t in EVENT_TYPES}
-    primary = (valid_map.get(raw_primary.strip().lower(), "Other")
-               if isinstance(raw_primary, str) and raw_primary else "Other")
+    # Classification: the model answers with taxonomy leaves; the product
+    # surface is the ONE simple category each leaf collapses to.
+    raw_categories = data.get("categories")
+    leaves = taxonomy.validate_tertiaries([
+        data.get("primary_category"),
+        *(raw_categories if isinstance(raw_categories, list) else []),
+    ])
+    event_types = taxonomy.to_labels(leaves)
+    primary = event_types[0]
 
     # Ensure deal_terms is a flat str→str dict
     deal_terms = _coerce_deal_terms(data.get("deal_terms", {}))
@@ -643,6 +662,7 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
         sentiment=sentiment,
         investor_takeaway=takeaway,
         catalysts=catalysts,
-        event_types=_validate_event_types(data.get("event_types", [])),
+        event_types=event_types,
+        taxonomy=leaves,
         mode="llm",
     )
