@@ -180,11 +180,14 @@ def fetch_filing_detail(index_url: str, form_type: str = "8-K") -> dict:
     Returns:
         {
             "primary_html": str,        # raw HTML of the primary document
+            "primary_url":  str,        # URL that HTML was fetched from
             "exhibits":     list[dict], # [{type, description, url}, ...]
         }
     primary_html is an empty string on any failure; exhibits may be empty.
+    primary_url is the document itself, not the index page the caller passed
+    in — a supporting quote has to link to the document containing it.
     """
-    empty = {"primary_html": "", "exhibits": []}
+    empty = {"primary_html": "", "primary_url": "", "exhibits": []}
     if not index_url:
         return empty
 
@@ -218,7 +221,11 @@ def fetch_filing_detail(index_url: str, form_type: str = "8-K") -> dict:
         except Exception:
             pass
 
-    return {"primary_html": primary_html, "exhibits": exhibits}
+    return {
+        "primary_html": primary_html,
+        "primary_url": primary_url if primary_html else "",
+        "exhibits": exhibits,
+    }
 
 
 # ---------------------------------------------------------------------------

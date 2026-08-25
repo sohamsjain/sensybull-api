@@ -40,6 +40,11 @@ class FilingEventBriefing:
     # services/ingest/briefing.py). facts_only means no LLM-authored text.
     # Historical events also carry "llm_verified" / "structured".
     mode: str = "llm"
+    # Supporting quotes, each verified against the source document and
+    # carrying a deep link that highlights it there. Shape per entry:
+    # {quote, event_type, source, doc_url, url, highlighted}.
+    # See services/ingest/evidence.py. Empty when nothing verified.
+    evidence: list[dict] = field(default_factory=list)
 
 
 @dataclass

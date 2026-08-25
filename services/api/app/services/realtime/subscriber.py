@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.services.realtime import pr_dedup
 from app.utils.deal_terms import normalize_deal_terms
+from app.utils.evidence import sanitize_evidence
 
 log = logging.getLogger(__name__)
 
@@ -188,6 +189,13 @@ def _handle_event(app, socketio, raw_message: str) -> None:
         briefing_json = data.get("briefing")
         if isinstance(briefing_json, dict) and briefing_json.get("deal_terms"):
             briefing_json = {**briefing_json, "deal_terms": deal_terms}
+        # Supporting quotes carry an outbound link each, so they are checked
+        # here rather than trusted from the wire (app/utils/evidence.py).
+        if isinstance(briefing_json, dict) and briefing_json.get("evidence"):
+            briefing_json = {
+                **briefing_json,
+                "evidence": sanitize_evidence(briefing_json["evidence"]),
+            }
 
         event = FilingEvent(
             edgar_id=edgar_id,

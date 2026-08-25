@@ -9,7 +9,9 @@ from briefing import (
     EVENT_TYPES,
     VOICE_RULES,
     _build_user_message,
+    _cited_quotes,
     _coerce_deal_terms,
+    _source_docs,
     _system_prompt,
     facts_only_briefing,
     generate_briefing,
@@ -621,3 +623,117 @@ class TestModelFallback:
         # Every model in the chain was attempted before giving up.
         assert (client.chat.completions.create.call_count
                 == len(briefing_module._MODEL_CHAIN))
+
+
+# ---------------------------------------------------------------------------
+# Evidence
+# ---------------------------------------------------------------------------
+
+_PRIMARY_DOC_URL = "https://www.sec.gov/Archives/edgar/data/12345/000001/a8k.htm"
+_PRIMARY_HTML = (
+    "<html><body><p>Item 1.01 Entry into a Material Definitive Agreement</p>"
+    f"<p>{_AGREEMENT_ITEM_TEXT}</p></body></html>"
+)
+
+
+def _grounded_filing():
+    return _item_filing(
+        primary_html=_PRIMARY_HTML, primary_doc_url=_PRIMARY_DOC_URL,
+    )
+
+
+class TestEvidencePrompt:
+    def test_prompt_asks_for_verbatim_quotes(self):
+        prompt = _system_prompt("8-K")
+        assert '"evidence"' in prompt
+        assert "VERBATIM" in prompt
+        assert "1 to 3 VERBATIM quotes" in prompt
+
+    def test_prompt_warns_that_bad_quotes_are_discarded(self):
+        assert "dropped if" in _system_prompt("8-K")
+
+
+class TestCitedQuotes:
+    def test_shape_is_enforced(self):
+        assert _cited_quotes("nonsense", EVENT_TYPES) == []
+        assert _cited_quotes([{"quote": ""}, "x", {"event_type": "Earnings"}],
+                             EVENT_TYPES) == []
+
+    def test_unknown_label_is_blanked_not_dropped(self):
+        assert _cited_quotes(
+            [{"event_type": "Spin-off", "quote": "some quoted text here"}],
+            EVENT_TYPES,
+        ) == [("", "some quoted text here")]
+
+    def test_known_label_is_canonicalized(self):
+        assert _cited_quotes(
+            [{"event_type": "earnings", "quote": "some quoted text here"}],
+            ["Earnings"],
+        ) == [("Earnings", "some quoted text here")]
+
+
+class TestSourceDocs:
+    def test_primary_document_needs_both_html_and_url(self):
+        assert _source_docs(_item_filing(primary_html=_PRIMARY_HTML), {}) == []
+        assert _source_docs(_grounded_filing(), {})[0].url == _PRIMARY_DOC_URL
+
+    def test_exhibit_without_an_index_url_is_skipped(self):
+        filing = _grounded_filing()
+        filing.exhibits = [Exhibit("EX-99.1", "Press release", "")]
+        assert [d.label for d in _source_docs(filing, {"EX-99.1": "<p>hi</p>"})] \
+            == ["primary"]
+
+    def test_exhibit_is_offered_alongside_the_primary_document(self):
+        filing = _grounded_filing()
+        filing.exhibits = [Exhibit("EX-99.1", "Press release", "https://x/ex.htm")]
+        docs = _source_docs(filing, {"EX-99.1": "<p>Widget Partners LLC</p>"})
+        assert [d.label for d in docs] == ["primary", "EX-99.1"]
+
+    def test_non_breaking_spaces_survive_into_the_source_text(self):
+        filing = _item_filing(
+            primary_html="<p>Total consideration of $4.3&nbsp;million.</p>",
+            primary_doc_url=_PRIMARY_DOC_URL,
+        )
+        assert "\u00a0" in _source_docs(filing, {})[0].text
+
+
+class TestGenerateBriefingEvidence:
+    def _payload(self, evidence):
+        return {
+            "headline": "SmallCap signs a five-year supply agreement",
+            "summary": "Summary.", "primary_event_type": "Material Agreement",
+            "event_types": ["Material Agreement"], "deal_terms": {},
+            "significance": "Medium", "sentiment": "Neutral",
+            "investor_takeaway": "Takeaway.", "evidence": evidence,
+        }
+
+    def test_verified_quote_becomes_a_deep_link(self):
+        payload = self._payload([{
+            "event_type": "Material Agreement",
+            "quote": "entered into a supply agreement with Widget Partners LLC",
+        }])
+        with patch.object(briefing_module, "Groq", return_value=_mock_groq(payload)):
+            result = generate_briefing(_grounded_filing(), {})
+        [proof] = result.evidence
+        assert proof["quote"] == \
+            "entered into a supply agreement with Widget Partners LLC"
+        assert proof["url"].startswith(_PRIMARY_DOC_URL + "#:~:text=")
+        assert proof["highlighted"] is True
+        assert proof["source"] == "Item 1.01"
+
+    def test_fabricated_quote_never_reaches_the_briefing(self):
+        payload = self._payload([{
+            "event_type": "Material Agreement",
+            "quote": "the Company announced a $2.0 billion share repurchase program",
+        }])
+        with patch.object(briefing_module, "Groq", return_value=_mock_groq(payload)):
+            assert generate_briefing(_grounded_filing(), {}).evidence == []
+
+    def test_missing_evidence_field_is_not_an_error(self):
+        payload = self._payload([])
+        del payload["evidence"]
+        with patch.object(briefing_module, "Groq", return_value=_mock_groq(payload)):
+            assert generate_briefing(_grounded_filing(), {}).evidence == []
+
+    def test_facts_only_briefing_carries_no_evidence(self):
+        assert facts_only_briefing(_item_filing()).evidence == []
