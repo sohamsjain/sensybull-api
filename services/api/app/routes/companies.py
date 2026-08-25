@@ -84,15 +84,42 @@ def get_company(company_id):
 
 # timeframe / lookback whitelists for the bars proxy
 BAR_TIMEFRAMES = {'1D': '1Day', '1H': '1Hour', '15Min': '15Min'}
-BAR_LOOKBACK_DAYS = {'1M': 31, '3M': 93, '6M': 186, '1Y': 366}
+BAR_LOOKBACK_DAYS = {'1M': 31, '3M': 93, '6M': 186, '1Y': 366, '2Y': 731, '5Y': 1827}
+# A window that has already closed can never change; a window ending "now" can.
+BARS_CACHE_SECONDS = 300
+BARS_HISTORY_CACHE_SECONDS = 86400
+
+
+def _parse_bars_end(raw: str):
+    """Parse the `end` query param into an aware UTC datetime.
+
+    Accepts a date ('2026-06-01' — read as that day's 00:00 UTC, so the page
+    returns strictly earlier sessions) or an RFC-3339 timestamp. Returns None
+    when the value can't be parsed.
+    """
+    from datetime import datetime, timezone
+
+    value = raw.strip()
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @companies_bp.route('/<company_id>/bars', methods=['GET'])
 @jwt_required()
 def get_company_bars(company_id):
-    """OHLCV bars for the company's ticker (Alpaca proxy, Redis-cached 5 min).
+    """OHLCV bars for the company's ticker (Alpaca proxy, Redis-cached).
 
-    Backs the frontend price chart with event markers.
+    Backs the frontend price chart with event markers. The optional `end`
+    param walks backwards through history: the chart passes the earliest bar
+    it already holds, and gets the window of `lookback` before that. Pages
+    that end in the past are immutable, so they cache for a day.
     """
     from datetime import datetime, timedelta, timezone
     from app.services.market_data import alpaca
@@ -109,15 +136,28 @@ def get_company_bars(company_id):
     if lookback not in BAR_LOOKBACK_DAYS:
         return jsonify({'error': f'lookback must be one of {sorted(BAR_LOOKBACK_DAYS)}'}), 400
 
-    cache_key = f'bars:{company.ticker}:{timeframe}:{lookback}'
+    now = datetime.now(timezone.utc)
+    raw_end = request.args.get('end', '').strip()
+    end = None
+    if raw_end:
+        end = _parse_bars_end(raw_end)
+        if end is None:
+            return jsonify({'error': 'end must be an ISO date or timestamp'}), 400
+        end = min(end, now)
+
+    window_end = end or now
+    start = window_end - timedelta(days=BAR_LOOKBACK_DAYS[lookback])
+    end_iso = end.isoformat() if end else None
+
+    cache_key = f'bars:{company.ticker}:{timeframe}:{lookback}:{end_iso or "now"}'
     cached = cache_get(cache_key)
     if cached:
         return jsonify(cached)
 
     symbol = alpaca.normalize_ticker(company.ticker)
-    start = datetime.now(timezone.utc) - timedelta(days=BAR_LOOKBACK_DAYS[lookback])
     try:
-        bars = alpaca.get_bars([symbol], BAR_TIMEFRAMES[timeframe], start.isoformat())
+        bars = alpaca.get_bars(
+            [symbol], BAR_TIMEFRAMES[timeframe], start.isoformat(), end=end_iso)
     except alpaca.AlpacaError:
         return jsonify({'error': 'Market data temporarily unavailable'}), 503
 
@@ -125,12 +165,15 @@ def get_company_bars(company_id):
         'ticker': company.ticker,
         'timeframe': timeframe,
         'lookback': lookback,
+        'start': start.isoformat(),
+        'end': end_iso,
         'bars': [
             {'t': b['t'], 'o': b['o'], 'h': b['h'], 'l': b['l'], 'c': b['c'], 'v': b['v']}
             for b in bars.get(symbol, [])
         ],
     }
-    cache_set(cache_key, response, 300)
+    ttl = BARS_HISTORY_CACHE_SECONDS if end else BARS_CACHE_SECONDS
+    cache_set(cache_key, response, ttl)
     return jsonify(response)
 
 
