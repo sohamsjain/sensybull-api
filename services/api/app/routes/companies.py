@@ -135,6 +135,71 @@ def get_company_bars(company_id):
 
 
 QUOTE_CACHE_SECONDS = 60
+# A feed page asks for ~50 rows; the cap keeps one request from fanning out
+# into an unbounded Alpaca call.
+MAX_QUOTE_IDS = 120
+
+
+@companies_bp.route('/quotes', methods=['GET'])
+@jwt_required()
+def get_company_quotes():
+    """Quotes for many companies in one round trip.
+
+    Backs the prices shown on every row of the feed and the watchlist, where
+    asking per company would mean dozens of requests. Shares the per-ticker
+    Redis cache with the single-company route, and folds every cache miss
+    into one Alpaca snapshot call.
+
+    GET /companies/quotes?ids=<uuid>,<uuid>,...
+      -> {"quotes": {"<company_id>": {...}, ...}}
+
+    Companies that are unknown, have no ticker, or have no price at all are
+    simply absent from the map — a missing price is not an error here.
+    """
+    from app.services.market_data import alpaca
+    from app.services.market_data.cache import cache_get, cache_set
+
+    raw = request.args.get('ids', '')
+    ids = [i.strip() for i in raw.split(',') if i.strip()][:MAX_QUOTE_IDS]
+    if not ids:
+        return jsonify({'quotes': {}})
+
+    try:
+        companies = Company.query.filter(Company.id.in_(ids)).all()
+    except sa.exc.DataError:
+        # A malformed UUID in the list shouldn't 500 the whole row of prices
+        db.session.rollback()
+        return jsonify({'quotes': {}})
+
+    quotes = {}
+    pending = {}  # alpaca symbol -> [company, ...]
+    for company in companies:
+        if not company.ticker:
+            continue
+        cached = cache_get(f'quote:{company.ticker}')
+        if cached:
+            quotes[str(company.id)] = cached
+            continue
+        pending.setdefault(alpaca.normalize_ticker(company.ticker), []).append(company)
+
+    snapshots = {}
+    if pending:
+        try:
+            snapshots = alpaca.get_snapshots(list(pending))
+        except alpaca.AlpacaError:
+            snapshots = {}
+
+    for symbol, symbol_companies in pending.items():
+        snapshot = snapshots.get(symbol)
+        for company in symbol_companies:
+            quote = _quote_payload(company, snapshot)
+            if quote is None:
+                continue
+            if not quote['stale']:
+                cache_set(f'quote:{company.ticker}', quote, QUOTE_CACHE_SECONDS)
+            quotes[str(company.id)] = quote
+
+    return jsonify({'quotes': quotes})
 
 
 @companies_bp.route('/<company_id>/quote', methods=['GET'])
@@ -166,9 +231,38 @@ def get_company_quote(company_id):
     except alpaca.AlpacaError:
         snapshot = None
 
+    quote = _quote_payload(company, snapshot)
+    if quote is None:
+        return jsonify({'error': 'Market data temporarily unavailable'}), 503
+    if not quote['stale']:
+        cache_set(cache_key, quote, QUOTE_CACHE_SECONDS)
+    return jsonify(quote)
+
+
+def _quote_payload(company, snapshot):
+    """Quote dict for a company, or None when there is no price to report.
+
+    Falls back to the daily-synced price (flagged `stale`) when Alpaca has
+    nothing for the symbol right now.
+    """
+    from app.services.market_data import alpaca
+
     price = alpaca.snapshot_price(snapshot) if snapshot else None
     if price is None:
-        return _stale_quote(company)
+        if company.last_price is None:
+            return None
+        return {
+            'ticker': company.ticker,
+            'price': float(company.last_price),
+            'prev_close': None,
+            'change': None,
+            'change_pct': None,
+            'as_of': (
+                company.price_updated_at.isoformat()
+                if company.price_updated_at else None
+            ),
+            'stale': True,
+        }
 
     # Day change is measured against the previous session's close. Alpaca's
     # prevDailyBar trails dailyBar all session, so this stays "today's move"
@@ -180,7 +274,7 @@ def get_company_quote(company_id):
         change = round(price - prev_close, 4)
         change_pct = round((price - prev_close) / prev_close * 100, 2)
 
-    response = {
+    return {
         'ticker': company.ticker,
         'price': price,
         'prev_close': prev_close,
@@ -189,23 +283,6 @@ def get_company_quote(company_id):
         'as_of': alpaca.snapshot_time(snapshot),
         'stale': False,
     }
-    cache_set(cache_key, response, QUOTE_CACHE_SECONDS)
-    return jsonify(response)
-
-
-def _stale_quote(company):
-    """Last synced price when Alpaca has nothing for the symbol right now."""
-    if company.last_price is None:
-        return jsonify({'error': 'Market data temporarily unavailable'}), 503
-    return jsonify({
-        'ticker': company.ticker,
-        'price': float(company.last_price),
-        'prev_close': None,
-        'change': None,
-        'change_pct': None,
-        'as_of': company.price_updated_at.isoformat() if company.price_updated_at else None,
-        'stale': True,
-    })
 
 
 @companies_bp.route('/', methods=['POST'])
