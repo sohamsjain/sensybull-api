@@ -56,10 +56,11 @@ _BLOCK_TAGS = frozenset({
 
 
 class _HTMLStripper(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, preserve_nbsp: bool = False) -> None:
         super().__init__()
         self._parts: list[str] = []
         self._in_skip: int = 0
+        self._space_class = r'[ \t\n]+' if preserve_nbsp else r'[ \t\u00a0\n]+'
 
     def handle_starttag(self, tag: str, attrs: list) -> None:
         t = tag.lower()
@@ -77,14 +78,22 @@ class _HTMLStripper(HTMLParser):
             # Collapse inline whitespace (source line-wrapping, &nbsp;, tabs)
             # within a text node to a single space.  Block structure (\n for
             # <p>, <div>, etc.) comes from handle_starttag, never from data.
-            self._parts.append(re.sub(r'[ \t\u00a0\n]+', ' ', data))
+            self._parts.append(re.sub(self._space_class, ' ', data))
 
     def get_text(self) -> str:
         return "".join(self._parts)
 
 
-def strip_html(html_str: str) -> str:
-    stripper = _HTMLStripper()
+def strip_html(html_str: str, preserve_nbsp: bool = False) -> str:
+    """Plain text of an HTML document, one \n per block boundary.
+
+    ``preserve_nbsp`` keeps U+00A0 where the source had one instead of
+    folding it into a plain space. Only the evidence path wants that: a
+    browser text fragment has to reproduce a non-breaking space exactly to
+    match it (see text_fragment.py). Everything that just reads the words —
+    item extraction, the LLM prompt, fingerprints — wants the folded form.
+    """
+    stripper = _HTMLStripper(preserve_nbsp=preserve_nbsp)
     stripper.feed(html_str)
     return stripper.get_text()
 
@@ -195,6 +204,21 @@ def extract_items(plain_text: str) -> list[dict]:
     return [candidates[n] for n in order if n in candidates]
 
 
+def item_label_at(plain_text: str, offset: int) -> str:
+    """The item section an offset falls in, e.g. "Item 5.02" — "" if none.
+
+    Used to caption a supporting quote with where in the filing it came
+    from. Reads the same headers extract_items does, so a caption can never
+    name an item the parser wouldn't have recognized.
+    """
+    label = ""
+    for m in _ITEM_HEADER.finditer(plain_text):
+        if m.start() > offset:
+            break
+        label = f"Item {m.group(1)}"
+    return label
+
+
 # ---------------------------------------------------------------------------
 # Filing assembly
 # ---------------------------------------------------------------------------
@@ -239,4 +263,9 @@ def build_filing(entry: dict, detail: dict, ticker_map: dict) -> Filing:
         items=items,
         exhibits=exhibits,
         form_type=form_type,
+        # Kept for the evidence path: a supporting quote is anchored in the
+        # primary document, and the link has to point at that document
+        # rather than at the index page `url` names.
+        primary_html=primary_html,
+        primary_doc_url=detail.get("primary_url", ""),
     )

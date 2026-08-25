@@ -31,6 +31,9 @@ class Briefing:
     # "llm" (LLM-authored narrative) or "facts_only" (deterministic
     # fallback, no LLM content)
     mode: str = "llm"
+    # Verified supporting quotes — see evidence.py for the shape and for
+    # what "verified" buys. Always empty on a facts_only briefing.
+    evidence: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -45,3 +48,8 @@ class Filing:
     exhibits: list[Exhibit] = field(default_factory=list)
     briefing: Briefing | None = None
     form_type: str = "8-K"
+    # Raw HTML of the primary document and the URL it was fetched from.
+    # `url` above is the EDGAR *index* page; a supporting quote has to link
+    # to the document that actually contains it.
+    primary_html: str = ""
+    primary_doc_url: str = ""

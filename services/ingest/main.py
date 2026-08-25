@@ -79,6 +79,7 @@ def _briefing_payload(briefing) -> FilingEventBriefing | None:
         catalysts=briefing.catalysts,
         deal_terms=briefing.deal_terms,
         mode=briefing.mode,
+        evidence=briefing.evidence,
     )
 
 

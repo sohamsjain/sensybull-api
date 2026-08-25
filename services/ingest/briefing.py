@@ -20,6 +20,7 @@ import threading
 
 from groq import Groq
 
+from evidence import MAX_EVIDENCE, SourceDoc, resolve_evidence
 from forms import LLM_HINTS
 from models import Briefing, Filing
 from parser import strip_html
@@ -242,6 +243,17 @@ Given a {{form_name}} filing, produce a JSON object with these fields:
    Include: vote dates, tender deadlines, expected close dates, effective dates,
    record dates. Omit this field entirely if no catalysts are mentioned.
 
+10. "evidence" — 1 to {{max_evidence}} VERBATIM quotes from the filing text below,
+   each one the sentence that proves the event you labelled. Every entry:
+   {{"event_type": "<one of the labels you chose>", "quote": "<exact text>"}}.
+   COPY THE TEXT CHARACTER FOR CHARACTER from a single continuous passage.
+   Do not paraphrase it, do not correct it, do not join text from two
+   places, do not use "..." to skip over words, and do not add words of
+   your own. Prefer the one sentence that states the event most directly
+   and keep each quote under 300 characters. Omit an entry rather than
+   approximate it: a quote that is not in the text above is worse than no
+   quote, and will be discarded.
+
 {VOICE_RULES}
 {{form_guidance}}
 RULES:
@@ -253,6 +265,9 @@ RULES:
   never the underlying transaction's terms unless restated here.
 - If the text is too thin to support a factual summary, respond with
   exactly {{"insufficient_content": true}} and no other fields.
+- Every "evidence" quote is checked against the filing text and dropped if
+  it is not found there, so quoting accurately is the only thing that gets
+  it published.
 Respond ONLY with valid JSON. No markdown, no commentary."""
 
 
@@ -270,6 +285,7 @@ def _system_prompt(form_type: str) -> str:
         _SYSTEM_PROMPT_TEMPLATE
         .replace("{form_name}", form_name)
         .replace("{form_guidance}", guidance)
+        .replace("{max_evidence}", str(MAX_EVIDENCE))
     )
 
 
@@ -551,6 +567,81 @@ def facts_only_briefing(filing: Filing) -> Briefing:
 
 
 # ---------------------------------------------------------------------------
+# Evidence — verified supporting quotes
+# ---------------------------------------------------------------------------
+
+def _cited_quotes(raw: object, event_types: list[str]) -> list[tuple[str, str]]:
+    """Model-cited (event_type, quote) pairs, before verification.
+
+    Only shape is enforced here; whether the quote is really in the filing
+    is evidence.resolve_evidence's job. An event_type the model invented for
+    the citation is blanked rather than dropped — the quote may still be
+    good, and the label would contradict the ones we validated.
+    """
+    if not isinstance(raw, list):
+        return []
+    known = {t.lower(): t for t in event_types}
+    out: list[tuple[str, str]] = []
+    for entry in raw[: MAX_EVIDENCE * 2]:
+        if not isinstance(entry, dict):
+            continue
+        quote = entry.get("quote")
+        if not isinstance(quote, str) or not quote.strip():
+            continue
+        label = entry.get("event_type")
+        label = known.get(label.strip().lower(), "") if isinstance(label, str) else ""
+        out.append((label, quote))
+    return out
+
+
+def _source_docs(filing: Filing, exhibit_texts: dict[str, str]) -> list[SourceDoc]:
+    """The documents a supporting quote may be anchored in, best first.
+
+    Text is stripped with preserve_nbsp so the fragment builder can
+    reproduce a non-breaking space exactly (see text_fragment.py); it is a
+    second strip of the same HTML, run only when there are quotes to place.
+    """
+    docs: list[SourceDoc] = []
+    if filing.primary_html and filing.primary_doc_url:
+        docs.append(SourceDoc(
+            label="primary",
+            url=filing.primary_doc_url,
+            text=strip_html(filing.primary_html, preserve_nbsp=True),
+        ))
+    urls = {ex.type: ex.url for ex in filing.exhibits}
+    for ex_type, html in exhibit_texts.items():
+        if html and urls.get(ex_type):
+            docs.append(SourceDoc(
+                label=ex_type,
+                url=urls[ex_type],
+                text=strip_html(html, preserve_nbsp=True),
+            ))
+    return docs
+
+
+def _evidence(filing: Filing, exhibit_texts: dict[str, str],
+              data: dict, event_types: list[str]) -> list[dict]:
+    """Verified evidence for one briefing — never raises.
+
+    Evidence is an enhancement to a briefing that is already correct
+    without it, so a failure anywhere in the matching path costs the quotes
+    and nothing else.
+    """
+    cited = _cited_quotes(data.get("evidence"), event_types)
+    if not cited:
+        return []
+    try:
+        resolved = resolve_evidence(cited, _source_docs(filing, exhibit_texts))
+    except Exception:
+        log.exception("Evidence resolution failed for %s", filing.title)
+        return []
+    if len(resolved) < len(cited):
+        log.info("Evidence: kept %d of %d cited quote(s) for %s",
+                 len(resolved), len(cited), filing.title)
+    return resolved
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -634,6 +725,8 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
     if not headline:
         headline = facts_only_briefing(filing).headline
 
+    event_types = _validate_event_types(data.get("event_types", []))
+
     return Briefing(
         headline=headline,
         summary=summary,
@@ -643,6 +736,7 @@ def generate_briefing(filing: Filing, exhibit_texts: dict[str, str]) -> Briefing
         sentiment=sentiment,
         investor_takeaway=takeaway,
         catalysts=catalysts,
-        event_types=_validate_event_types(data.get("event_types", [])),
+        event_types=event_types,
         mode="llm",
+        evidence=_evidence(filing, exhibit_texts, data, event_types),
     )

@@ -120,6 +120,56 @@ class TestHandleEvent:
         assert event.briefing_json["headline"] == "Apple Signs Major Deal"
         assert all(et.attributes is None for et in event.event_types)
 
+    def test_evidence_survives_the_wire(self, app, db_session, sample_company):
+        doc = ("https://www.sec.gov/Archives/edgar/data/320193/"
+               "000032019324000001/a8k.htm")
+        briefing = json.loads(_make_filing_json())["briefing"]
+        briefing["evidence"] = [{
+            "quote": "Entered into agreement with Acme Corp.",
+            "event_type": "Material Agreement", "source": "Item 1.01",
+            "doc_url": doc, "url": f"{doc}#:~:text=Entered%20into%20agreement",
+            "highlighted": True,
+        }]
+        sio = FakeSocketIO()
+        _handle_event(app, sio, _make_filing_json(
+            edgar_id="test-sub-evidence", briefing=briefing))
+
+        event = FilingEvent.query.filter_by(edgar_id="test-sub-evidence").first()
+        [proof] = event.briefing_json["evidence"]
+        assert proof["url"].startswith(doc + "#:~:")
+        assert proof["highlighted"] is True
+        # And it reaches the client on the same payload as the briefing
+        [emitted] = [e for e in sio.emitted if e["room"] == "public"]
+        assert emitted["data"]["briefing"]["evidence"] == [proof]
+
+    def test_evidence_pointing_off_sec_loses_its_link(
+        self, app, db_session, sample_company
+    ):
+        briefing = json.loads(_make_filing_json())["briefing"]
+        briefing["evidence"] = [{
+            "quote": "Entered into agreement with Acme Corp.",
+            "doc_url": "https://not-sec.test/a.htm",
+            "url": "https://not-sec.test/a.htm#:~:text=Entered",
+            "highlighted": True,
+        }]
+        _handle_event(app, FakeSocketIO(), _make_filing_json(
+            edgar_id="test-sub-evidence-offhost", briefing=briefing))
+
+        event = FilingEvent.query.filter_by(
+            edgar_id="test-sub-evidence-offhost").first()
+        [proof] = event.briefing_json["evidence"]
+        assert proof["quote"].startswith("Entered into agreement")
+        assert proof["url"] == "" and proof["highlighted"] is False
+
+    def test_briefing_without_evidence_is_untouched(
+        self, app, db_session, sample_company
+    ):
+        _handle_event(app, FakeSocketIO(), _make_filing_json(
+            edgar_id="test-sub-no-evidence"))
+        event = FilingEvent.query.filter_by(
+            edgar_id="test-sub-no-evidence").first()
+        assert "evidence" not in event.briefing_json
+
     def test_idempotency_skips_duplicate(self, app, db_session, sample_company):
         sio = FakeSocketIO()
         _handle_event(app, sio, _make_filing_json())

@@ -1,6 +1,6 @@
 """build_filing: 8-K item extraction, tiers, and ticker resolution."""
 
-from parser import build_filing
+from parser import build_filing, item_label_at, strip_html
 
 
 def _entry(**overrides):
@@ -59,3 +59,35 @@ class TestBuildFiling:
         entry = _entry(form_type="8-K/A")
         filing = build_filing(entry, {"primary_html": "", "exhibits": []}, ticker_map)
         assert filing.form_type == "8-K/A"
+
+
+class TestStripHtml:
+    def test_non_breaking_space_folds_by_default(self):
+        assert strip_html("<p>$1.2&nbsp;billion</p>").strip() == "$1.2 billion"
+
+    def test_non_breaking_space_survives_when_preserved(self):
+        # The evidence path needs it verbatim: a browser text fragment only
+        # matches a non-breaking space with a non-breaking space.
+        assert strip_html("<p>$1.2&nbsp;billion</p>",
+                          preserve_nbsp=True).strip() == "$1.2\u00a0billion"
+
+    def test_ordinary_whitespace_still_collapses_when_preserved(self):
+        assert strip_html("<p>a   \n  b</p>", preserve_nbsp=True).strip() == "a b"
+
+
+class TestItemLabelAt:
+    TEXT = ("SMALLCAP INDUSTRIES INC.\n"
+            "Item 1.01 Entry into a Material Definitive Agreement\n"
+            "The Company signed a supply agreement.\n"
+            "Item 5.02 Departure of Officers\n"
+            "The chief executive resigned.\n")
+
+    def test_offset_inside_an_item_names_it(self):
+        assert item_label_at(self.TEXT, self.TEXT.index("supply")) == "Item 1.01"
+        assert item_label_at(self.TEXT, self.TEXT.index("resigned")) == "Item 5.02"
+
+    def test_cover_page_before_the_first_header_names_nothing(self):
+        assert item_label_at(self.TEXT, self.TEXT.index("SMALLCAP")) == ""
+
+    def test_text_without_headers_names_nothing(self):
+        assert item_label_at("Just a press release body.", 5) == ""
