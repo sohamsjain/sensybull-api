@@ -28,7 +28,7 @@ class Config:
 
     JWT_SECRET_KEY = _require_env('JWT_SECRET_KEY')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
-    MIN_AUTH_SESSION_DAYS = 183
+    MIN_AUTH_SESSION_DAYS = 365
     _jwt_refresh_days = int(os.environ.get('JWT_REFRESH_DAYS') or MIN_AUTH_SESSION_DAYS)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=max(_jwt_refresh_days, MIN_AUTH_SESSION_DAYS))
 
@@ -38,6 +38,12 @@ class Config:
     JWT_TOKEN_LOCATION = ['headers', 'cookies']
     JWT_REFRESH_COOKIE_PATH = '/api/v1/auth'
     JWT_COOKIE_CSRF_PROTECT = True
+    # flask-jwt-extended defaults this to True, which writes the refresh and
+    # CSRF cookies as *session* cookies — discarded when the browser closes,
+    # however long the token inside them is valid for. That default silently
+    # capped every sign-in at "until you quit your browser" no matter what
+    # JWT_REFRESH_TOKEN_EXPIRES said. Cookies now carry a real expiry.
+    JWT_SESSION_COOKIE = False
     JWT_COOKIE_SECURE = os.environ.get('JWT_COOKIE_SECURE', 'true').lower() in ('1', 'true', 'yes')
     JWT_COOKIE_SAMESITE = os.environ.get('JWT_COOKIE_SAMESITE') or 'Lax'
     JWT_COOKIE_DOMAIN = os.environ.get('JWT_COOKIE_DOMAIN')  # None => host-only cookie
