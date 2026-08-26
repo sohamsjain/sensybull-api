@@ -150,3 +150,21 @@ class TestChangePassword:
 class TestSessionLifetime:
     def test_refresh_token_lasts_at_least_six_months(self, app):
         assert app.config["JWT_REFRESH_TOKEN_EXPIRES"].days >= 183
+
+    def test_refresh_cookie_survives_a_browser_restart(self, app):
+        # A long-lived token in a session cookie is still a daily logout.
+        assert app.config["JWT_SESSION_COOKIE"] is False
+
+    def test_login_sets_a_refresh_cookie_with_an_expiry(self, client):
+        client.post("/api/v1/auth/register", json={
+            "name": "Cookie", "email": "cookie@example.com", "password": "testpass123",
+        })
+        resp = client.post("/api/v1/auth/login", json={
+            "email": "cookie@example.com", "password": "testpass123",
+        })
+        cookies = [h for k, h in resp.headers if k == "Set-Cookie"]
+        refresh = next(c for c in cookies if c.startswith("refresh_token_cookie="))
+        csrf = next(c for c in cookies if c.startswith("csrf_refresh_token="))
+        # Both must outlive the browser session, not just the refresh cookie.
+        assert "Expires=" in refresh or "Max-Age=" in refresh
+        assert "Expires=" in csrf or "Max-Age=" in csrf
