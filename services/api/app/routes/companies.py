@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from marshmallow import ValidationError
 import sqlalchemy as sa
-from app import db
+from app import db, limiter
 from app.models.company import Company
 from app.utils.schemas import CompanySchema, CompanyCreateSchema
 
@@ -30,13 +30,18 @@ def _search_query(q: str):
         (Company.ticker.ilike(f'{term}%'), 1),
         else_=2,
     )
-    return query.order_by(relevance, Company.name)
+    return query.order_by(relevance, Company.market_cap.desc().nullslast(), Company.name)
 
 
 @companies_bp.route('/search', methods=['GET'])
-@jwt_required()
+@limiter.limit('120 per minute')
 def search_companies():
-    """Lightweight typeahead endpoint — returns compact results (id, name, ticker)."""
+    """Lightweight typeahead endpoint — returns compact results (id, name, ticker).
+
+    Public: it backs the fundamentals pages' search box, which must work
+    for signed-out readers. Companies with a fundamentals page rank first,
+    then by market cap, so "APP" finds Apple before a shell company.
+    """
     q = request.args.get('q', '').strip()
     if not q:
         return jsonify({'error': 'q parameter is required'}), 400
@@ -47,7 +52,12 @@ def search_companies():
     results = _search_query(q).limit(limit).all()
     return jsonify({
         'results': [
-            {'id': c.id, 'name': c.name, 'ticker': c.ticker}
+            {
+                'id': c.id, 'name': c.name, 'ticker': c.ticker,
+                'market_cap': c.market_cap,
+                'industry': c.fundamentals.industry if c.fundamentals else None,
+                'has_fundamentals': bool(c.fundamentals and c.fundamentals.has_fundamentals),
+            }
             for c in results
         ],
     })

@@ -33,6 +33,26 @@ def register_cli(app):
             f'companies still missing share counts (backfills on next runs)'
         )
 
+    @app.cli.command('sync-fundamentals')
+    @click.option('--symbols', default='', help='Comma-separated tickers to sync (default: the cron queue).')
+    @click.option('--limit', default=None, type=int, help='Max companies to fetch this run.')
+    @click.option('--full', is_flag=True, help='Refresh every synced company, not just stale ones.')
+    @with_appcontext
+    def sync_fundamentals_cmd(symbols, limit, full):
+        """FMP → fundamentals tables (backfill new companies, refresh recent filers)."""
+        from app.services.fundamentals.sync import run_sync
+        symbol_list = [s.strip() for s in symbols.split(',') if s.strip()] or None
+        result = run_sync(symbols=symbol_list, limit=limit, full=full)
+        click.echo(f'Fundamentals sync: {result}')
+
+    @app.cli.command('rebuild-fundamentals')
+    @with_appcontext
+    def rebuild_fundamentals_cmd():
+        """Recompute derived ratios from stored periods + today's prices (no FMP calls)."""
+        from app.services.fundamentals.sync import rebuild_all_snapshots
+        n = rebuild_all_snapshots()
+        click.echo(f'Rebuilt {n} fundamentals snapshots')
+
     @app.cli.command('backfill-reactions')
     @click.option('--days', default=7, show_default=True,
                   help='Create reaction rows for events filed in the last N days.')

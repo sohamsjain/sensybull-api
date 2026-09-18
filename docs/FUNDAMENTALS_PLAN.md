@@ -1,7 +1,15 @@
 # Fundamentals explorer — plan
 
-> **Status:** plan, nothing built. Decisions marked `[ ]` need an answer before
-> the matching phase starts. **Last updated:** 2026-09-18.
+> **Status:** Phase 0 built (API + pipeline, `services/api/app/services/fundamentals/`);
+> Phase 1 (the page) in progress in sensybull-web. **Last updated:** 2026-09-18.
+>
+> Decisions taken 2026-09-18: FMP Ultimate plan (3,000 calls/min, full history,
+> transcripts, 13F); whole universe synced up front (no lazy tail, though the
+> on-demand path still exists for tickers that appear between cron runs);
+> database moved to `basic-1gb` + 5 GB disk; pages public; every substitution in
+> 2.3 confirmed; **balance sheet is Assets → Liabilities → Equity** (US 10-K
+> order — screener's liabilities-first layout is Indian Schedule III, and US
+> readers expect assets first); Phase 1 before charts or peers.
 >
 > Goal: a screener.in-quality company page for US equities — same information
 > architecture, same density, same "everything on one page, nothing to click

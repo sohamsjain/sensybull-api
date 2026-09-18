@@ -71,8 +71,8 @@ class TestCompanyTypeahead:
         assert resp.status_code == 200
         results = resp.get_json()['results']
         assert len(results) >= 1
-        # Compact format — only id, name, ticker
-        assert set(results[0].keys()) == {'id', 'name', 'ticker'}
+        # Compact format: identity plus what the results list shows (cap, industry)
+        assert set(results[0].keys()) == {'id', 'name', 'ticker', 'market_cap', 'industry', 'has_fundamentals'}
 
     def test_typeahead_requires_q(self, client, auth_headers):
         resp = client.get('/api/v1/companies/search', headers=auth_headers)

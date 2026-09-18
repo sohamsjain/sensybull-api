@@ -2,8 +2,12 @@ databases:
   - name: sensybull-db
     # Must match (or exceed) the live instance's plan — Render rejects a
     # blueprint sync that would downgrade a database. The free tier expires
-    # after 30 days, so sensybull-db lives on basic-256mb.
-    plan: basic-256mb
+    # after 30 days. Upgraded from basic-256mb with the fundamentals explorer
+    # (Sept 2026): ~6k companies × ~85 reporting periods with the raw FMP
+    # payloads retained is ~1.5 GB, and the page queries want the working set
+    # in RAM. diskSizeGB leaves headroom for the rolling refresh churn.
+    plan: basic-1gb
+    diskSizeGB: 5
     databaseName: sensybull
     user: sensybull
     ipAllowList: []  # only internal access
@@ -60,6 +64,13 @@ services:
         sync: false
       - key: ALPACA_FEED
         value: iex
+      # ── Fundamentals explorer (Financial Modeling Prep) ──
+      - key: FMP_API_KEY
+        sync: false
+      - key: FMP_CALLS_PER_MINUTE
+        value: "600"   # Ultimate plan allows 3,000; the cron shares the same key
+      - key: FUNDAMENTALS_ON_DEMAND
+        value: "true"  # first visit to an unsynced ticker backfills it in-process
 
   # ── Ingest service ────────────────────────────────────────────────────
   - type: worker
@@ -111,6 +122,12 @@ services:
         sync: false
       - key: ALPACA_FEED
         value: iex
+      - key: FMP_API_KEY
+        sync: false
+      - key: FMP_CALLS_PER_MINUTE
+        value: "1500"
+      - key: FUNDAMENTALS_SYNC_LIMIT
+        value: "6000"  # whole universe per run; the first run is the backfill
 
   # ── Redis ─────────────────────────────────────────────────────────────
   - type: redis
