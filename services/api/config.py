@@ -74,9 +74,6 @@ class Config:
     # Rate limiting (use redis://... in production for cross-instance limits)
     RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI') or 'memory://'
 
-    # Alerts
-    ALERT_EMAIL_SUBJECT_PREFIX = os.environ.get('ALERT_EMAIL_SUBJECT_PREFIX') or '[Sensybull]'
-
     # Web Push (generate with: python -c "from py_vapid import Vapid02; v=Vapid02(); v.generate_keys(); ...")
     # or: npx web-push generate-vapid-keys
     VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY')
