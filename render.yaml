@@ -7,7 +7,7 @@ databases:
     # payloads retained is ~1.5 GB, and the page queries want the working set
     # in RAM. diskSizeGB leaves headroom for the rolling refresh churn.
     plan: basic-1gb
-    diskSizeGB: 5
+    diskSizeGB: 10
     databaseName: sensybull
     user: sensybull
     ipAllowList: []  # only internal access
