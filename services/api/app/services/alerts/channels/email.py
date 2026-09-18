@@ -6,7 +6,41 @@ from app.services.email.resend_client import EmailMessage
 
 log = logging.getLogger(__name__)
 
-TIER_LABELS = {1: 'High', 2: 'Medium', 3: 'Low'}
+
+def _event_price(event):
+    """Best-effort last trade price for the event's ticker, for display
+    next to the ticker in the alert. Mirrors the companies.py quote proxy
+    (same Redis cache key, same Alpaca-then-last_price fallback) so this
+    never issues an extra Alpaca call beyond what the feed already pays for.
+    """
+    if not event.ticker:
+        return None
+
+    from app.routes.companies import QUOTE_CACHE_SECONDS, _quote_payload
+    from app.services.market_data import alpaca
+    from app.services.market_data.cache import cache_get, cache_set
+
+    cache_key = f'quote:{event.ticker}'
+    cached = cache_get(cache_key)
+    if cached:
+        return cached.get('price')
+
+    company = event.company
+    if company is None:
+        return None
+
+    symbol = alpaca.normalize_ticker(event.ticker)
+    try:
+        snapshot = alpaca.get_snapshots([symbol]).get(symbol)
+    except alpaca.AlpacaError:
+        snapshot = None
+
+    quote = _quote_payload(company, snapshot)
+    if quote is None:
+        return None
+    if not quote['stale']:
+        cache_set(cache_key, quote, QUOTE_CACHE_SECONDS)
+    return quote.get('price')
 
 
 class EmailChannel(NotificationChannel):
@@ -24,7 +58,13 @@ class EmailChannel(NotificationChannel):
 
         cfg = app.config
         briefing = event.briefing_json or {}
-        tier_label = TIER_LABELS.get(event.max_tier, 'Low')
+        headline = briefing.get('headline', 'New SEC Filing')
+
+        try:
+            price = _event_price(event)
+        except Exception:
+            log.exception('EmailChannel: price lookup failed for event=%s', event.id)
+            price = None
 
         context = {
             'app_name': cfg.get('APP_NAME', 'Sensybull'),
@@ -33,21 +73,18 @@ class EmailChannel(NotificationChannel):
             'user_name': user.name,
             'ticker': event.ticker or '',
             'company_name': event.company_name or '',
-            'headline': briefing.get('headline', 'New SEC Filing'),
+            'price': price,
+            'important': event.important,
+            'headline': headline,
             'summary': briefing.get('summary', ''),
             'summary_bullets': briefing.get('bullets', []),
-            'event_types': event.event_types_json or [],
-            'max_tier': event.max_tier,
-            'tier_label': tier_label,
-            'filing_date': event.filing_date,
             'edgar_url': event.edgar_url or '',
-            'event_url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/events/{event.id}",
+            'event_url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/e/{event.id}",
         }
 
         html, text = render('filing_alert', context)
 
-        prefix = cfg.get('ALERT_EMAIL_SUBJECT_PREFIX', '[Sensybull]')
-        subject = f"{prefix} {tier_label} Priority: {event.company_name or event.ticker} — {briefing.get('headline', 'New Filing')}"
+        subject = f"{event.company_name or event.ticker}: {headline}"
 
         message = EmailMessage(
             to=user.email,
