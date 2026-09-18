@@ -86,34 +86,57 @@ def sync_company(company: Company, client: FMPClient | None = None, *, today: da
         eod = _safe(client.eod_light, symbol)
     except FMPError as exc:
         log.warning('FMP sync failed for %s: %s', company.ticker, exc)
-        snap.sync_error = str(exc)[:300]
+        return _record_failure(company, str(exc), fetched_at)
+
+    try:
+        for col, val in mapper.map_profile(profile).items():
+            setattr(snap, col, val)
+
+        count = _upsert_periods(company, annual + quarters)
+
+        refs = derive.price_references(eod, today)
+        snap.price_ref_date = refs.get('ref_date')
+        snap.price_1y_ago = _bounded(refs.get('1y'))
+        snap.price_3y_ago = _bounded(refs.get('3y'))
+        snap.price_5y_ago = _bounded(refs.get('5y'))
+        snap.price_10y_ago = _bounded(refs.get('10y'))
+        snap.high_52w = _bounded(refs.get('high_52w'))
+        snap.low_52w = _bounded(refs.get('low_52w'))
+        snap.dividends_ttm_ps = _bounded(derive.dividends_ttm_per_share(dividends, today))
+
+        snap.has_fundamentals = any(p.get('revenue') is not None or p.get('net_income') is not None
+                                    for p in annual + quarters)
+        snap.sync_error = None
+        snap.last_synced_at = fetched_at
+        db.session.flush()
+        rebuild_snapshot(company, snap=snap)
+        db.session.commit()
+    except Exception as exc:  # noqa: BLE001 — a bad row for one company must not end the run
+        log.exception('storing fundamentals failed for %s', company.ticker)
+        db.session.rollback()
+        return _record_failure(company, f'store: {exc}', fetched_at)
+    return {'periods': count, 'has_fundamentals': snap.has_fundamentals, 'error': None}
+
+
+def _bounded(value):
+    """Decimal safe for a Numeric(14, 4) column, else None."""
+    from app.services.fundamentals.fields import to_decimal
+    return to_decimal(value)
+
+
+def _record_failure(company: Company, message: str, fetched_at: datetime) -> dict:
+    """Mark the snapshot failed in its own transaction so the cron moves on."""
+    try:
+        snap = _get_or_create_snapshot(company)
+        snap.sync_error = message[:300]
         snap.last_synced_at = fetched_at
         db.session.commit()
-        return {'periods': 0, 'has_fundamentals': bool(snap.has_fundamentals), 'error': str(exc)}
-
-    for col, val in mapper.map_profile(profile).items():
-        setattr(snap, col, val)
-
-    count = _upsert_periods(company, annual + quarters)
-
-    refs = derive.price_references(eod, today)
-    snap.price_ref_date = refs.get('ref_date')
-    snap.price_1y_ago = refs.get('1y')
-    snap.price_3y_ago = refs.get('3y')
-    snap.price_5y_ago = refs.get('5y')
-    snap.price_10y_ago = refs.get('10y')
-    snap.high_52w = refs.get('high_52w')
-    snap.low_52w = refs.get('low_52w')
-    snap.dividends_ttm_ps = derive.dividends_ttm_per_share(dividends, today)
-
-    snap.has_fundamentals = any(p.get('revenue') is not None or p.get('net_income') is not None
-                                for p in annual + quarters)
-    snap.sync_error = None
-    snap.last_synced_at = fetched_at
-    db.session.flush()
-    rebuild_snapshot(company, snap=snap)
-    db.session.commit()
-    return {'periods': count, 'has_fundamentals': snap.has_fundamentals, 'error': None}
+        has = bool(snap.has_fundamentals)
+    except Exception:  # noqa: BLE001
+        log.exception('could not record sync failure for %s', company.ticker)
+        db.session.rollback()
+        has = False
+    return {'periods': 0, 'has_fundamentals': has, 'error': message}
 
 
 def _safe(fn, *args):

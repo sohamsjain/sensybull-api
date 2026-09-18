@@ -145,6 +145,21 @@ class TestMapper:
         (p,) = mapper.merge_statements([b, a], [], [], 'annual')
         assert p['revenue'] == 2
 
+    def test_implausible_per_share_values_are_dropped_and_flagged(self):
+        # FMP has served an EPS of -7e13 for a shell company's 1998 year;
+        # Numeric(14, 4) cannot hold it and no real EPS is anywhere near it.
+        income = [{'date': '1998-12-31', 'revenue': 0, 'netIncome': -2_050_000,
+                   'eps': -74477743458560.2, 'epsDiluted': -74477743458560.2}]
+        (p,) = mapper.merge_statements(income, [], [], 'annual')
+        assert p['eps_basic'] is None and p['eps_diluted'] is None
+        assert mapper.FLAG_VALUE_OUT_OF_RANGE in p['quality_flags']
+        assert p['net_income'] == -2_050_000
+        from app.services.fundamentals.fields import to_int
+        assert to_int(9.5e18) is None and to_int('nan') is None and to_int(-391_035_000_000) == -391_035_000_000
+        (ok,) = mapper.merge_statements([{'date': '2024-12-31', 'eps': 6.08}], [], [], 'annual')
+        assert ok['eps_basic'] == Decimal('6.08')
+        assert mapper.FLAG_VALUE_OUT_OF_RANGE not in ok['quality_flags']
+
     def test_profile_mapping_and_operating_check(self):
         prof = _load('aapl_profile.json')[0]
         mapped = mapper.map_profile(prof)
@@ -368,6 +383,18 @@ class TestSync:
         snap = CompanyFundamentals.query.filter_by(company_id=priced_company.id).one()
         assert snap.sync_error and snap.last_synced_at
         assert not snap.has_fundamentals
+
+    def test_store_failure_is_recorded_and_run_continues(self, db_session, priced_company, sample_company_2):
+        # A storage error for one company must not abort the cron, and must
+        # leave the session usable for the next company.
+        fmp = FakeFMP()
+        with patch('app.services.fundamentals.sync._upsert_periods', side_effect=ValueError('boom')):
+            result = sync_company(priced_company, fmp, today=TODAY)
+        assert result['error'].startswith('store: boom')
+        snap = CompanyFundamentals.query.filter_by(company_id=priced_company.id).one()
+        assert snap.sync_error.startswith('store: boom') and snap.last_synced_at
+        # next company syncs normally on the same session
+        assert sync_company(sample_company_2, FakeFMP(), today=TODAY)['error'] is None
 
     def test_optional_calls_may_fail(self, db_session, priced_company):
         result = sync_company(priced_company, FakeFMP(fail={'dividends', 'eod'}), today=TODAY)

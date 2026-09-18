@@ -117,23 +117,48 @@ def pick(record: dict, aliases: list[str]):
     return None
 
 
+# BigInteger holds |value| < 2^63 ≈ 9.2e18; the world's largest balance
+# sheets are ~1e13, so anything near the limit is provider garbage.
+AMOUNT_LIMIT = 9_000_000_000_000_000_000
+
+
 def to_int(value) -> int | None:
-    """Whole-dollar integer from FMP's number-or-string values."""
+    """Whole-dollar integer from FMP's number-or-string values; None when
+    absent, unparsable, or too large for a BigInteger column."""
     if value is None or value == '':
         return None
     try:
-        return int(round(float(value)))
+        number = float(value)
+        if number != number or number in (float('inf'), float('-inf')):
+            return None
+        result = int(round(number))
     except (TypeError, ValueError, OverflowError):
         return None
+    if abs(result) >= AMOUNT_LIMIT:
+        return None
+    return result
 
 
-def to_decimal(value) -> Decimal | None:
+# Numeric(14, 4) columns hold |value| < 10^10. Nothing per share or per
+# price is legitimately near that, so anything beyond it is provider garbage
+# (FMP has served an EPS of -7e13 for a shell company's 1998 year).
+PER_SHARE_LIMIT = Decimal('1000000000')
+
+
+def to_decimal(value, limit: Decimal | None = PER_SHARE_LIMIT) -> Decimal | None:
+    """Decimal from FMP's number-or-string values; None when absent, unparsable
+    or (with a limit) implausibly large for the column it is bound for."""
     if value is None or value == '':
         return None
     try:
-        return Decimal(str(value))
+        dec = Decimal(str(value))
     except (InvalidOperation, ValueError):
         return None
+    if not dec.is_finite():
+        return None
+    if limit is not None and abs(dec) >= limit:
+        return None
+    return dec
 
 
 def to_date(value) -> date | None:
