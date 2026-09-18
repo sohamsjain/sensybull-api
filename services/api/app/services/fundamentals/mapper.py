@@ -23,14 +23,21 @@ FLAG_NO_EBITDA = 'no_ebitda'
 FLAG_NO_REVENUE = 'no_revenue'
 FLAG_BALANCE_MISMATCH = 'balance_mismatch'
 FLAG_MISSING_STATEMENT = 'missing_statement'
+FLAG_VALUE_OUT_OF_RANGE = 'value_out_of_range'
 
 
-def _map_fields(record: dict, spec: dict, per_share: set, shares: set) -> dict:
+def _map_fields(record: dict, spec: dict, per_share: set, shares: set,
+                flags: list | None = None) -> dict:
     out = {}
     for col, aliases in spec.items():
         raw = F.pick(record, aliases)
         if col in per_share:
             dec = F.to_decimal(raw)
+            if dec is None and raw not in (None, '') and flags is not None:
+                # Present but implausible (or unparsable): dropped, and the
+                # period says so rather than failing the whole company.
+                if FLAG_VALUE_OUT_OF_RANGE not in flags:
+                    flags.append(FLAG_VALUE_OUT_OF_RANGE)
             out[col] = dec
         else:
             out[col] = F.to_int(raw)
@@ -87,7 +94,7 @@ def merge_statements(income: list[dict], balance: list[dict], cashflow: list[dic
         }
         flags = []
         if slot['income'] is not None:
-            row.update(_map_fields(slot['income'], F.INCOME_FIELDS, per_share, set()))
+            row.update(_map_fields(slot['income'], F.INCOME_FIELDS, per_share, set(), flags))
         else:
             row.update({c: None for c in F.INCOME_FIELDS})
             flags.append(FLAG_MISSING_STATEMENT)
