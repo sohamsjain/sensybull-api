@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import (
-    create_access_token, create_refresh_token, get_jwt, get_jwt_identity,
-    jwt_required, set_refresh_cookies, unset_jwt_cookies,
+    create_access_token, create_refresh_token, get_csrf_token, get_jwt,
+    get_jwt_identity, jwt_required, set_refresh_cookies, unset_jwt_cookies,
 )
 from marshmallow import ValidationError
 
@@ -41,10 +41,22 @@ def _auth_success(payload: dict, user_id: str, status: int = 200):
     The access token goes in the JSON body (the client sends it as a bearer
     header). The refresh token is delivered only as an httpOnly, CSRF-protected
     cookie so it is never exposed to JavaScript / XSS.
+
+    The CSRF half of the double-submit pair also goes in the body. It is
+    published as the `csrf_refresh_token` cookie too, but that cookie is
+    host-only on the API's own domain: a browser on the frontend's origin
+    cannot read it back out of `document.cookie`, so a client that had only
+    the cookie to work from could never send the `X-CSRF-TOKEN` header, and
+    every `/auth/refresh` would 401 the moment the access token expired.
+    Handing the value over in the body costs nothing — the cookie is not
+    httpOnly, so it was already readable to any script on its own origin, and
+    a cross-site attacker can read neither.
     """
+    refresh_token = create_refresh_token(identity=user_id)
     payload['access_token'] = create_access_token(identity=user_id)
+    payload['csrf_token'] = get_csrf_token(refresh_token)
     resp = jsonify(payload)
-    set_refresh_cookies(resp, create_refresh_token(identity=user_id))
+    set_refresh_cookies(resp, refresh_token)
     return resp, status
 
 

@@ -168,3 +168,39 @@ class TestSessionLifetime:
         # Both must outlive the browser session, not just the refresh cookie.
         assert "Expires=" in refresh or "Max-Age=" in refresh
         assert "Expires=" in csrf or "Max-Age=" in csrf
+
+    def test_login_returns_the_csrf_token_in_the_body(self, client):
+        """The frontend runs on another host, so it cannot read the cookie.
+
+        `csrf_refresh_token` is host-only on the API's domain. A browser on
+        sensybull.com cannot see a cookie belonging to api.sensybull.com, so
+        the body is the only way the client can learn the value it has to echo
+        back in `X-CSRF-TOKEN`. Without it every refresh 401s and the reader
+        signs in again as soon as the access token expires.
+        """
+        client.post("/api/v1/auth/register", json={
+            "name": "Csrf", "email": "csrf@example.com", "password": "testpass123",
+        })
+        resp = client.post("/api/v1/auth/login", json={
+            "email": "csrf@example.com", "password": "testpass123",
+        })
+        token = resp.get_json()["csrf_token"]
+        assert token
+        cookies = [h for k, h in resp.headers if k == "Set-Cookie"]
+        cookie = next(c for c in cookies if c.startswith("csrf_refresh_token="))
+        assert cookie.split(";")[0].split("=", 1)[1] == token
+
+    def test_refresh_accepts_the_csrf_token_from_the_body(self, client):
+        """A full round trip with no readable cookie in play."""
+        client.post("/api/v1/auth/register", json={
+            "name": "Round", "email": "round@example.com", "password": "testpass123",
+        })
+        login = client.post("/api/v1/auth/login", json={
+            "email": "round@example.com", "password": "testpass123",
+        })
+        token = login.get_json()["csrf_token"]
+
+        assert client.post("/api/v1/auth/refresh").status_code == 401
+        resp = client.post("/api/v1/auth/refresh", headers={"X-CSRF-TOKEN": token})
+        assert resp.status_code == 200
+        assert resp.get_json()["access_token"]
