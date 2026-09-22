@@ -3,6 +3,11 @@
 Column-oriented: each table is {"periods": [...], "rows": {key: [values]}}
 with one value per period, newest LAST (screener reads left → right in
 time). Row charts plot a row's array directly.
+
+Both `quarterly` and `annual` carry the same four statements, so the page
+can offer one Quarterly/Annual switch per statement rather than two
+separate sections. The quarterly figures cost nothing extra: `sync.py`
+already fetches all three statements at quarter granularity.
 """
 
 from datetime import date
@@ -121,9 +126,15 @@ def build_payload(company: Company, snap: CompanyFundamentals | None,
         'ratios': ratios,
         'growth': derived.get('growth') or {},
         'analysis': derived.get('analysis') or {'pros': [], 'cons': [], 'key_points': []},
-        'quarterly': _table(quarters, lambda p: R.income_rows(p, include_payout=False),
-                            [k for k in R.INCOME_ROWS if k != 'dividend_payout_pct'],
-                            R.expense_breakdown),
+        'quarterly': {
+            'income': _table(quarters, lambda p: R.income_rows(p, include_payout=False),
+                             [k for k in R.INCOME_ROWS if k != 'dividend_payout_pct'],
+                             R.expense_breakdown),
+            'balance': _table(quarters, R.balance_rows, R.BALANCE_ROWS, R.balance_breakdown),
+            'cashflow': _table(quarters, R.cashflow_rows, R.CASHFLOW_ROWS + ['free_cash_flow'],
+                               R.cashflow_breakdown),
+            'ratios': _table(quarters, R.quarter_ratio_rows, R.RATIO_ROWS),
+        },
         'annual': {
             'income': annual_income,
             'balance': _table(annual, R.balance_rows, R.BALANCE_ROWS, R.balance_breakdown),

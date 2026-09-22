@@ -225,6 +225,24 @@ class TestRows:
         # ROCE = (PBT + interest) / (assets − current liabilities)
         assert ratios['roce_pct'] == pytest.approx(100 * 123_485 / (364_980 - 176_392), abs=0.05)
 
+    def test_quarterly_ratios_use_the_quarter_length(self):
+        """A quarter run through the annual day count reads 4x too high."""
+        fy = self._fy24()
+        q = dict(fy)
+        for flow in ('revenue', 'cost_of_revenue', 'pretax_income', 'interest_expense'):
+            if q.get(flow) is not None:
+                q[flow] = q[flow] / 4
+        annual = R.ratio_rows(fy)
+        quarterly = R.quarter_ratio_rows(q)
+        # Same balances over a quarter of the flow: the days figures match
+        # the annual ones, rather than quadrupling.
+        for key in ('debtor_days', 'inventory_days', 'days_payable'):
+            assert quarterly[key] == pytest.approx(annual[key], abs=0.2)
+        # ROCE is annualised, so a steady quarter reports the annual rate.
+        assert quarterly['roce_pct'] == pytest.approx(annual['roce_pct'], abs=0.05)
+        # Without the correction it would have been four times the rate.
+        assert R.ratio_rows(q)['debtor_days'] == pytest.approx(4 * annual['debtor_days'], abs=0.5)
+
     def test_null_safety(self):
         empty = {'period_end': date(2020, 1, 1)}
         assert all(v is None for v in R.income_rows(empty).values())
@@ -449,11 +467,17 @@ class TestRoutes:
         assert body['ratios']['price'] == 240.5
         assert body['ratios']['pe_ttm'] == pytest.approx(240.5 / (1.85 + 1.57 + 1.65 + 2.40), abs=0.01)
         # quarterly: 8 quarters newest last, no payout row
-        q = body['quarterly']
+        q = body['quarterly']['income']
         assert [p['label'] for p in q['periods']][-1] == 'Sep 2025'
         assert len(q['rows']['sales']) == 8 and q['rows']['sales'][-1] == 102_466 * M
         assert 'dividend_payout_pct' not in q['rows']
         assert q['breakdown']['cost_of_revenue_pct'][-1] == pytest.approx(53.31, abs=0.01)
+        # the other three statements come at quarter granularity too, over
+        # the same periods, so one switch can flip a statement in place
+        for name in ('balance', 'cashflow', 'ratios'):
+            assert body['quarterly'][name]['periods'] == q['periods']
+        assert set(body['quarterly']['balance']['rows']) == set(R.BALANCE_ROWS)
+        assert body['quarterly']['cashflow']['rows']['free_cash_flow'][-1] is not None
         # annual: 6 years + TTM column
         inc = body['annual']['income']
         assert [p['label'] for p in inc['periods']] == ['Sep 2020', 'Sep 2021', 'Sep 2022',
@@ -496,7 +520,7 @@ class TestRoutes:
         sync_company(priced_company, fmp, today=TODAY)
         body = client.get('/api/v1/fundamentals/AAPL').get_json()
         assert body['status'] == 'empty'
-        assert body['quarterly']['periods'] == []
+        assert body['quarterly']['income']['periods'] == []
 
     def test_documents(self, client, db_session, priced_company):
         submissions = {'filings': {'recent': {

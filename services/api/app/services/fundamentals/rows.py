@@ -181,31 +181,45 @@ def cashflow_breakdown(p: dict) -> dict:
 RATIO_ROWS = ['debtor_days', 'inventory_days', 'days_payable', 'cash_conversion_cycle',
               'working_capital_days', 'roce_pct']
 
+# Days in the period a row is computed over. A days ratio divides a balance
+# (a point in time) by a flow (the period's revenue or COGS), so the flow's
+# length has to be the multiplier: run a quarter through 365 and every days
+# figure comes out four times too high. ROCE is a rate, so a quarter's is
+# annualised by the same ratio instead.
+DAYS_IN_YEAR = 365.0
+DAYS_IN_QUARTER = 365.0 / 4
 
-def ratio_rows(p: dict) -> dict:
+
+def ratio_rows(p: dict, period_days: float = DAYS_IN_YEAR) -> dict:
+    """p is one period; period_days is how long that period is (see above)."""
     revenue = p.get('revenue')
     cogs = p.get('cost_of_revenue')
-    debtor = _days(p.get('receivables'), revenue, 365)
-    inv = _days(p.get('inventory'), cogs, 365)
-    payable = _days(p.get('payables'), cogs, 365)
+    debtor = _days(p.get('receivables'), revenue, period_days)
+    inv = _days(p.get('inventory'), cogs, period_days)
+    payable = _days(p.get('payables'), cogs, period_days)
     ccc = None
     if debtor is not None:
         ccc = round(debtor + (inv or 0) - (payable or 0), 1)
     wc = None
     if p.get('total_current_assets') is not None and p.get('total_current_liabilities') is not None:
-        wc = _days(p['total_current_assets'] - p['total_current_liabilities'], revenue, 365)
+        wc = _days(p['total_current_assets'] - p['total_current_liabilities'], revenue, period_days)
     return {
         'debtor_days': debtor,
         'inventory_days': inv,
         'days_payable': payable,
         'cash_conversion_cycle': ccc,
         'working_capital_days': wc,
-        'roce_pct': roce_pct(p),
+        'roce_pct': roce_pct(p, period_days),
     }
 
 
-def roce_pct(p: dict):
-    """EBIT / (total assets − current liabilities)."""
+def quarter_ratio_rows(p: dict) -> dict:
+    """ratio_rows over a quarter, with the quarter's own day count."""
+    return ratio_rows(p, DAYS_IN_QUARTER)
+
+
+def roce_pct(p: dict, period_days: float = DAYS_IN_YEAR):
+    """EBIT / (total assets − current liabilities), as an annual rate."""
     pbt = p.get('pretax_income')
     if pbt is None:
         return None
@@ -217,4 +231,5 @@ def roce_pct(p: dict):
     capital = assets - (cl or 0)
     if capital <= 0:
         return None
-    return _pct(ebit, capital)
+    annualised = ebit * (DAYS_IN_YEAR / period_days)
+    return _pct(annualised, capital)
