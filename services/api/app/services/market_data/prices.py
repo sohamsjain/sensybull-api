@@ -45,17 +45,16 @@ PATH_INTRADAY = "/historical-chart/{interval}"
 QUOTE_BATCH = 200
 
 DAILY = "1day"
-# FMP's intraday intervals → calendar days fetched per request. FMP caps
-# how many rows an intraday call returns, so long windows are chunked;
-# the spans are conservative (1-min × 3 days is ~1,200 regular-session
-# rows, ~2,900 with extended hours).
+# FMP's intraday intervals → calendar days fetched per request. FMP
+# silently returns only the most recent part of a window that's too long,
+# so long windows are chunked. Each span is verified by
+# `flask check-market-data`: 1hour × 120d came back as the last ~62
+# sessions only (Sept 2026), so it's 60. Add an interval here only with a
+# span that check has passed.
 INTRADAY_CHUNK_DAYS = {
-    "1min": 3,
-    "5min": 15,
-    "15min": 30,
-    "30min": 60,
-    "1hour": 120,
-    "4hour": 365,
+    "1min": 3,     # reaction worker
+    "15min": 30,   # bars route, timeframe=15Min
+    "1hour": 60,   # bars route, timeframe=1H
 }
 TIMEFRAMES = frozenset({DAILY, *INTRADAY_CHUNK_DAYS})
 
