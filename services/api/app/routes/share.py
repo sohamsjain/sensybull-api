@@ -17,6 +17,7 @@ from app import db, limiter
 from app.models.company import Company
 from app.services.share_analytics import ALLOWED_EVENTS, record_share_event
 from app.utils.sectors import sic_to_sector
+from app.services.company_resolver import find_company_by_symbol
 from app.utils.tickers import normalize_symbol
 
 share_bp = Blueprint('share', __name__)
@@ -27,11 +28,6 @@ def share_base_url() -> str:
     base = (current_app.config.get('SHARE_BASE_URL')
             or current_app.config['FRONTEND_URL'])
     return base.rstrip('/')
-
-
-def find_company_by_symbol(symbol: str) -> Company | None:
-    # ilike without wildcards = case-insensitive equality
-    return Company.query.filter(Company.ticker.ilike(symbol)).first()
 
 
 def build_share_payload(company: Company) -> dict:

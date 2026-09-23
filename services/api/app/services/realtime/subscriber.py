@@ -62,6 +62,7 @@ def _handle_event(app, socketio, raw_message: str) -> None:
     with app.app_context():
         from app import db
         from app.models.company import Company
+        from app.services.company_resolver import resolve_event_company
         from app.models.filing_event import FilingEvent
         from app.models.event_type import EventType
         from app.models.catalyst import Catalyst
@@ -82,6 +83,15 @@ def _handle_event(app, socketio, raw_message: str) -> None:
             return
 
         signal_type = data.get("signal_type", "8-K")
+
+        # The event carries the symbol the SEC or the wire used; the company
+        # table carries FMP's (they drift — renames, class-share spellings).
+        # Store ours, so the feed's company links, price reactions and the
+        # dedup below all speak one symbol.
+        company = resolve_event_company(ticker, cik)
+        if company is not None and company.ticker and company.ticker != ticker:
+            log.info("Subscriber: ticker %s → %s (company %s)", ticker, company.ticker, company.id)
+            ticker = company.ticker
 
         # ── Cross-source dedup (press releases ↔ SEC filings) ────────────
         if signal_type == "PR" and ticker:
@@ -146,14 +156,9 @@ def _handle_event(app, socketio, raw_message: str) -> None:
 
         # ── End cross-source dedup ────────────────────────────────────────
 
-        # Resolve company — create if missing so we never get orphan events
-        company = None
-        if ticker:
-            company = Company.query.filter_by(ticker=ticker).first()
-        if company is None and cik:
-            company = Company.query.filter_by(cik=cik).first()
-        if company is None and cik:
-            company = Company.query.filter_by(cik=cik.zfill(10)).first()
+        # Create the company if missing so we never get orphan events (an
+        # OTC filer outside the listed universe, a listing newer than the
+        # last sync-companies run)
         if company is None and ticker:
             company = Company(
                 name=data.get("company_name", ticker),

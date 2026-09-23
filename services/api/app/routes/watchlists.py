@@ -7,6 +7,7 @@ from app import db, limiter
 from app.models.watchlist import Watchlist
 from app.models.company import Company
 from app.models.company_read_state import CompanyReadState
+from app.services.company_resolver import find_company_by_symbol
 from app.services.share_analytics import record_share_event
 from app.utils.schemas import WatchlistSchema, WatchlistCreateSchema
 from app.utils.tickers import normalize_symbol
@@ -119,7 +120,7 @@ def track_company():
     if not symbol:
         return jsonify({'error': 'invalid_symbol'}), 400
 
-    company = Company.query.filter(Company.ticker.ilike(symbol)).first()
+    company = find_company_by_symbol(symbol)
     if not company:
         return jsonify({'error': 'unknown_ticker'}), 404
 

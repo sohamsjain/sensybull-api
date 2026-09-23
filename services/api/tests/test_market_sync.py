@@ -1,9 +1,9 @@
-"""Tests for the market-data sync (EDGAR shares outstanding + FMP prices)."""
+"""Tests for the market-data sync (FMP quotes + FMP shares outstanding)."""
 
 from datetime import date
 from unittest.mock import patch
 
-from app.services.market_data import edgar_facts, prices
+from app.services.market_data import prices, sync as market_sync
 from app.services.market_data.sync import sync_market_data
 
 
@@ -32,99 +32,78 @@ class TestComputeAtr14:
         assert atr == (13 * 2.0 + 10.0) / 14
 
 
-class TestRecentQuarters:
-    def test_walks_back_across_year_boundary(self):
-        quarters = edgar_facts._recent_quarters(date(2026, 1, 15))
-        assert quarters == [(2026, 1), (2025, 4), (2025, 3)]
+class _FakeFMP:
+    """shares_float_page() over a fixed list of rows, paged like FMP."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.pages = []
+
+    def shares_float_page(self, page, limit):
+        self.pages.append(page)
+        return self.rows[page * limit:(page + 1) * limit]
 
 
-class TestFramesParsing:
-    def test_merges_concepts_and_keeps_freshest_as_of(self, monkeypatch):
-        """Both frame concepts are harvested across FRAME_QUARTERS quarters;
-        the freshest as_of per CIK wins regardless of source order."""
-        def fake_get_json(url, ua):
-            if "dei/EntityCommonSharesOutstanding" in url and "CY2026Q2I" in url:
-                return {"data": [
-                    {"cik": 320193, "val": 15000000000, "end": "2026-04-18"},
-                ]}
-            if "us-gaap/CommonStockSharesOutstanding" in url and "CY2026Q1I" in url:
-                return {"data": [
-                    # Older AAPL value must NOT overwrite the fresher dei one
-                    {"cik": 320193, "val": 14000000000, "end": "2026-01-31"},
-                    # TSLA only appears in the us-gaap frames
-                    {"cik": 1318605, "val": 3200000000, "end": "2026-03-31"},
-                ]}
-            return None  # everything else 404s
-
-        monkeypatch.setenv("SEC_USER_AGENT", "test test@example.com")
-        monkeypatch.setattr(edgar_facts, "FALLBACK_DELAY", 0)
-        with patch.object(edgar_facts, "_get_json", side_effect=fake_get_json) as gj:
-            result = edgar_facts.fetch_shares_by_cik()
-
-        assert result["0000320193"] == (15000000000, date(2026, 4, 18))
-        assert result["0001318605"] == (3200000000, date(2026, 3, 31))
-        # 2 concepts × FRAME_QUARTERS quarters queried
-        assert gj.call_count == 2 * edgar_facts.FRAME_QUARTERS
+def _run(quotes, share_rows, monkeypatch, page_size=None):
+    fake = _FakeFMP(share_rows)
+    if page_size:
+        monkeypatch.setattr(market_sync, "SHARES_PAGE_SIZE", page_size)
+    with patch("app.services.market_data.sync.prices._fmp", return_value=fake), \
+         patch("app.services.market_data.sync.prices.get_quotes", return_value=quotes):
+        result = sync_market_data()
+    return result, fake
 
 
 class TestSyncMarketData:
-    def test_market_cap_arithmetic(self, db_session, sample_company, sample_company_2):
-        shares = {
-            "0000320193": (1000, date(2026, 3, 31)),   # AAPL
-            "0001318605": (500, date(2026, 3, 31)),    # TSLA
-        }
+    def test_fmp_market_cap_wins_over_shares_times_price(
+        self, db_session, sample_company, sample_company_2, monkeypatch,
+    ):
         quotes = {
-            "AAPL": {"symbol": "AAPL", "price": 200.5},
+            # FMP's cap is taken as is
+            "AAPL": {"symbol": "AAPL", "price": 200.5, "marketCap": 3_000_000},
+            # no cap on the quote → shares × price
             "TSLA": {"symbol": "TSLA", "price": 100.0},
         }
-        with patch.object(edgar_facts, "fetch_shares_by_cik", return_value=shares), \
-             patch("app.services.market_data.sync.prices.get_quotes",
-                   return_value=quotes):
-            shares_updated, prices_updated = sync_market_data()
+        shares = [
+            {"symbol": "AAPL", "date": "2026-06-30", "outstandingShares": 1000},
+            {"symbol": "TSLA", "date": "2026-06-30", "outstandingShares": 500},
+        ]
+        (shares_updated, prices_updated), _ = _run(quotes, shares, monkeypatch)
 
         assert shares_updated == 2
         assert prices_updated == 2
         db_session.session.refresh(sample_company)
         db_session.session.refresh(sample_company_2)
         assert sample_company.shares_outstanding == 1000
-        assert sample_company.market_cap == int(1000 * 200.5)
+        assert sample_company.shares_as_of == date(2026, 6, 30)
+        assert sample_company.market_cap == 3_000_000
         assert float(sample_company_2.last_price) == 100.0
         assert sample_company_2.market_cap == 500 * 100
 
+    def test_pages_through_shares_float(self, db_session, sample_company, monkeypatch):
+        rows = [{"symbol": f"X{i}", "outstandingShares": 1} for i in range(4)]
+        rows.append({"symbol": "AAPL", "date": "2026-06-30", "outstandingShares": 7})
+        (shares_updated, _), fake = _run({}, rows, monkeypatch, page_size=2)
+        assert fake.pages == [0, 1, 2]  # the short third page ends it
+        assert shares_updated == 1
+        assert sample_company.shares_outstanding == 7
+
+    def test_never_regresses_to_older_share_count(self, db_session, sample_company, monkeypatch):
+        sample_company.shares_outstanding = 900
+        sample_company.shares_as_of = date(2026, 9, 1)
+        db_session.session.commit()
+        rows = [{"symbol": "AAPL", "date": "2026-06-30", "outstandingShares": 1000}]
+        _run({}, rows, monkeypatch)
+        assert sample_company.shares_outstanding == 900
+
     def test_fmp_failure_leaves_prices_untouched(self, db_session, sample_company):
-        with patch.object(edgar_facts, "fetch_shares_by_cik", return_value={}), \
+        fake = _FakeFMP([])
+        with patch("app.services.market_data.sync.prices._fmp", return_value=fake), \
              patch("app.services.market_data.sync.prices.get_quotes",
                    side_effect=prices.MarketDataError("down")):
             _, prices_updated = sync_market_data()
         assert prices_updated == 0
         assert sample_company.last_price is None
-
-    def test_fallback_targets_priced_companies_missing_shares(
-        self, db_session, sample_company, sample_company_2,
-    ):
-        """The companyfacts backfill must cover tradable (priced) companies
-        the frames missed — the set the market-cap filter needs."""
-        sample_company.last_price = 50  # priced but no shares
-        db_session.session.commit()
-
-        with patch.object(edgar_facts, "fetch_shares_by_cik", return_value={}), \
-             patch.object(edgar_facts, "fetch_company_shares",
-                          return_value=(2000, date(2026, 6, 30))) as fcs, \
-             patch.object(edgar_facts, "FALLBACK_DELAY", 0), \
-             patch("app.services.market_data.sync.prices.get_quotes",
-                   return_value={"AAPL": {"symbol": "AAPL", "price": 50.0},
-                                 "TSLA": {"symbol": "TSLA", "price": 0}}):
-            shares_updated, _ = sync_market_data()
-
-        # AAPL: priced → backfilled; TSLA: no price, not watchlisted → skipped
-        assert shares_updated == 1
-        called_ciks = {c.args[0] for c in fcs.call_args_list}
-        assert sample_company.cik in called_ciks
-        assert sample_company_2.cik not in called_ciks
-        db_session.session.refresh(sample_company)
-        assert sample_company.shares_outstanding == 2000
-        # Final pass computed the cap from the backfilled shares
-        assert sample_company.market_cap == 2000 * 50
 
 
 class TestCompanyPayloads:

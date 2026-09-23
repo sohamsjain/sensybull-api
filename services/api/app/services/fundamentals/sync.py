@@ -268,7 +268,9 @@ def run_sync(*, client: FMPClient | None = None, limit: int | None = None,
                  .order_by(Company.market_cap.desc().nullslast()).all())
         priority = _priority_ids()
         push([c for c in never if c.id in priority])
-        push(never)
+        # De-listed rows (outside the listed-stock universe) only when a
+        # reader follows them or they filed recently — the priority set
+        push([c for c in never if c.listed is not False])
 
         if not full:
             push(_recently_reported(client, today))
@@ -276,7 +278,7 @@ def run_sync(*, client: FMPClient | None = None, limit: int | None = None,
         stale = (Company.query.join(CompanyFundamentals)
                  .filter(CompanyFundamentals.last_synced_at <= cutoff)
                  .order_by(CompanyFundamentals.last_synced_at.asc()).all())
-        push(stale)
+        push([c for c in stale if c.listed is not False or c.id in priority])
 
     queue = queue[:limit]
     started = time.monotonic()

@@ -15,7 +15,10 @@ create_schema = CompanyCreateSchema()
 def _search_query(q: str):
     """Build a Company query that matches ticker and name, ordered by relevance.
 
-    Priority: exact ticker > ticker prefix > name contains.
+    Priority: exact ticker > ticker prefix > name contains. Rows the
+    company sync has de-listed (outside FMP's listed common stocks — OTC
+    filers, delisted names) are left out; they still resolve by id and by
+    symbol for the feed and watchlists that already hold them.
     """
     term = q.strip()
     query = Company.query.filter(
@@ -23,7 +26,7 @@ def _search_query(q: str):
             Company.ticker.ilike(f'%{term}%'),
             Company.name.ilike(f'%{term}%'),
         )
-    )
+    ).filter(Company.listed.isnot(False))
     # Order: exact ticker first, then ticker prefix, then everything else (name match)
     relevance = sa.case(
         (Company.ticker.ilike(term), 0),

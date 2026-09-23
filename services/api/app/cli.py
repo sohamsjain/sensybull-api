@@ -10,27 +10,38 @@ def register_cli(app):
     @app.cli.command('sync-companies')
     @with_appcontext
     def sync_companies_cmd():
-        """Fetch SEC company_tickers.json and upsert into the database."""
+        """FMP listed common stocks → the company table (add, rename, de-list)."""
         from app.services.company_loader import sync_companies
-        added, total = sync_companies()
-        click.echo(f'Synced companies: {added} new, {total} total in SEC dataset')
+        stats = sync_companies()
+        click.echo(
+            f"Synced companies: {stats['universe']} listed common stocks; "
+            f"{stats['added']} added, {stats['renamed']} renamed, "
+            f"{stats['share_classes']} share classes aliased, {stats['delisted']} de-listed, "
+            f"{stats['aliases']} feed tickers aliased, {stats['pending']} left for the next run"
+            + ('' if stats['complete'] else ' (universe incomplete: de-listing skipped)'))
+
+    @app.cli.command('check-company-universe')
+    @with_appcontext
+    def check_company_universe_cmd():
+        """Live-check FMP's screener against what sync-companies assumes."""
+        from app.services.company_loader import run_checks
+        results = run_checks()
+        for name, status, detail in results:
+            click.echo(f'[{status.upper():4}] {name}: {detail}')
+        if any(status == 'fail' for _, status, _ in results):
+            raise SystemExit(1)
 
     @app.cli.command('sync-market-data')
     @with_appcontext
     def sync_market_data_cmd():
-        """Refresh shares outstanding (EDGAR) and last price/market cap (FMP)."""
+        """Refresh shares outstanding, last price and market cap (all FMP)."""
         from app.models.company import Company
         from app.services.market_data.sync import sync_market_data
         shares, prices = sync_market_data()
         caps = Company.query.filter(Company.market_cap.isnot(None)).count()
-        missing = (Company.query
-                   .filter(Company.last_price.isnot(None))
-                   .filter(Company.shares_outstanding.is_(None))
-                   .count())
         click.echo(
             f'Market data synced: shares updated for {shares}, prices for {prices} '
-            f'companies; {caps} companies have market caps, {missing} priced '
-            f'companies still missing share counts (backfills on next runs)'
+            f'companies; {caps} companies have market caps'
         )
 
     @app.cli.command('check-market-data')

@@ -22,6 +22,7 @@ from app.models.fundamentals import CompanyFundamentals, FundamentalsPeriod
 from app.services.fundamentals import payload as P
 from app.services.fundamentals.edgar_docs import EdgarDocsError, fetch_documents
 from app.services.market_data.cache import cache_get, cache_set
+from app.services.company_resolver import find_company_by_symbol
 from app.utils.tickers import normalize_symbol
 
 log = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ def _find_company(raw_symbol: str):
     symbol = normalize_symbol(raw_symbol)
     if not symbol:
         return None, (jsonify({'error': 'invalid_symbol'}), 400)
-    company = Company.query.filter(Company.ticker.ilike(symbol)).first()
+    company = find_company_by_symbol(symbol)
     if not company:
         return None, (jsonify({'error': 'unknown_ticker'}), 404)
     return company, None

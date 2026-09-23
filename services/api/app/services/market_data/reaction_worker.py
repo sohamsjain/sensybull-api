@@ -180,7 +180,10 @@ def _finish_row(row, price, measured_at, baseline, atr):
 
 def _process_event_rows(db, event, rows, company, now):
     """Measure all due rows for one event. Returns True if any row completed."""
-    symbol = prices.normalize_ticker(event.ticker)
+    # The company's ticker is FMP's symbol; an older event may carry the one
+    # the SEC used that day
+    symbol = prices.normalize_ticker(company.ticker if company is not None and company.ticker
+                                     else event.ticker)
     t0 = _aware(event.filing_date)
     t0_day = _eastern(t0).date()
     in_hours = _in_regular_hours(t0)
@@ -348,7 +351,7 @@ def tick(app, socketio) -> int:
                 db.session.commit()
                 continue
 
-            company = Company.query.filter_by(ticker=event.ticker).first()
+            company = event.company or Company.query.filter_by(ticker=event.ticker).first()
             try:
                 if _process_event_rows(db, event, event_rows, company, now):
                     done_count += sum(1 for r in event_rows if r.status == "done")

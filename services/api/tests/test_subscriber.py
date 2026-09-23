@@ -276,3 +276,36 @@ class TestPayloadEdgeCases:
         # Ticker presence gates reaction scheduling — must now fire
         rows = PriceReaction.query.filter_by(filing_event_id=event.id).all()
         assert len(rows) == 6
+
+
+class TestCanonicalTicker:
+    """The event stores the company table's (FMP's) symbol, whatever the
+    SEC or the wire called it — so the feed's company link resolves."""
+
+    def test_cik_match_rewrites_the_sec_ticker(self, app, db_session):
+        from app import db
+        company = Company(name="Meta Platforms, Inc.", ticker="META", cik="0001326801", listed=True)
+        db.session.add(company)
+        db.session.commit()
+
+        _handle_event(app, FakeSocketIO(), _make_filing_json(
+            edgar_id="canon-1", cik="1326801", ticker="FB"))
+
+        event = FilingEvent.query.filter_by(edgar_id="canon-1").first()
+        assert event.company_id == company.id
+        assert event.ticker == "META"
+        assert all(c.ticker == "META" for c in event.catalysts)
+        assert Company.query.count() == 1  # no duplicate auto-created
+
+    def test_class_share_spelling_resolves_without_cik(self, app, db_session):
+        from app import db
+        company = Company(name="Berkshire Hathaway Inc.", ticker="BRK-B", cik="0001067983")
+        db.session.add(company)
+        db.session.commit()
+
+        _handle_event(app, FakeSocketIO(), _make_filing_json(
+            edgar_id="canon-2", signal_type="PR", cik="", ticker="BRK.B"))
+
+        event = FilingEvent.query.filter_by(edgar_id="canon-2").first()
+        assert event.company_id == company.id
+        assert event.ticker == "BRK-B"
