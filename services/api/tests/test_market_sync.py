@@ -1,37 +1,34 @@
-"""Tests for the market-data sync (EDGAR shares outstanding + Alpaca prices)."""
+"""Tests for the market-data sync (EDGAR shares outstanding + FMP prices)."""
 
 from datetime import date
 from unittest.mock import patch
 
-from app.services.market_data import alpaca, edgar_facts
+from app.services.market_data import edgar_facts, prices
 from app.services.market_data.sync import sync_market_data
 
 
 class TestTickerNormalization:
-    def test_sec_dash_to_alpaca_dot(self):
-        assert alpaca.normalize_ticker("BRK-B") == "BRK.B"
-        assert alpaca.normalize_ticker("aapl") == "AAPL"
-
-    def test_roundtrip(self):
-        assert alpaca.denormalize_ticker(alpaca.normalize_ticker("BRK-B")) == "BRK-B"
+    def test_fmp_keeps_the_sec_dash(self):
+        assert prices.normalize_ticker("BRK-B") == "BRK-B"
+        assert prices.normalize_ticker(" aapl ") == "AAPL"
 
 
 class TestComputeAtr14:
     def test_needs_15_bars(self):
         bars = [{"h": 11, "l": 9, "c": 10}] * 14
-        assert alpaca.compute_atr14(bars) is None
+        assert prices.compute_atr14(bars) is None
 
     def test_known_series(self):
         # Constant bars: TR = high - low = 2 every day → ATR = 2
         bars = [{"h": 11.0, "l": 9.0, "c": 10.0}] * 20
-        assert alpaca.compute_atr14(bars) == 2.0
+        assert prices.compute_atr14(bars) == 2.0
 
     def test_gap_dominates_range(self):
         # Prev close 10, next bar gaps to h=20 l=19 c=19.5:
         # TR = max(1, |20-10|, |19-10|) = 10 for that bar
         bars = [{"h": 11.0, "l": 9.0, "c": 10.0}] * 15
         bars.append({"h": 20.0, "l": 19.0, "c": 19.5})
-        atr = alpaca.compute_atr14(bars[-15:])
+        atr = prices.compute_atr14(bars[-15:])
         assert atr == (13 * 2.0 + 10.0) / 14
 
 
@@ -76,13 +73,13 @@ class TestSyncMarketData:
             "0000320193": (1000, date(2026, 3, 31)),   # AAPL
             "0001318605": (500, date(2026, 3, 31)),    # TSLA
         }
-        snapshots = {
-            "AAPL": {"latestTrade": {"p": 200.5}},
-            "TSLA": {"dailyBar": {"c": 100.0}},  # no latest trade → daily close
+        quotes = {
+            "AAPL": {"symbol": "AAPL", "price": 200.5},
+            "TSLA": {"symbol": "TSLA", "price": 100.0},
         }
         with patch.object(edgar_facts, "fetch_shares_by_cik", return_value=shares), \
-             patch("app.services.market_data.sync.alpaca.get_snapshots",
-                   return_value=snapshots):
+             patch("app.services.market_data.sync.prices.get_quotes",
+                   return_value=quotes):
             shares_updated, prices_updated = sync_market_data()
 
         assert shares_updated == 2
@@ -94,10 +91,10 @@ class TestSyncMarketData:
         assert float(sample_company_2.last_price) == 100.0
         assert sample_company_2.market_cap == 500 * 100
 
-    def test_alpaca_failure_leaves_prices_untouched(self, db_session, sample_company):
+    def test_fmp_failure_leaves_prices_untouched(self, db_session, sample_company):
         with patch.object(edgar_facts, "fetch_shares_by_cik", return_value={}), \
-             patch("app.services.market_data.sync.alpaca.get_snapshots",
-                   side_effect=alpaca.AlpacaError("down")):
+             patch("app.services.market_data.sync.prices.get_quotes",
+                   side_effect=prices.MarketDataError("down")):
             _, prices_updated = sync_market_data()
         assert prices_updated == 0
         assert sample_company.last_price is None
@@ -114,9 +111,9 @@ class TestSyncMarketData:
              patch.object(edgar_facts, "fetch_company_shares",
                           return_value=(2000, date(2026, 6, 30))) as fcs, \
              patch.object(edgar_facts, "FALLBACK_DELAY", 0), \
-             patch("app.services.market_data.sync.alpaca.get_snapshots",
-                   return_value={"AAPL": {"latestTrade": {"p": 50.0}},
-                                 "TSLA": {}}):
+             patch("app.services.market_data.sync.prices.get_quotes",
+                   return_value={"AAPL": {"symbol": "AAPL", "price": 50.0},
+                                 "TSLA": {"symbol": "TSLA", "price": 0}}):
             shares_updated, _ = sync_market_data()
 
         # AAPL: priced → backfilled; TSLA: no price, not watchlisted → skipped

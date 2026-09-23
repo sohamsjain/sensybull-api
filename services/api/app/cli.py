@@ -18,7 +18,7 @@ def register_cli(app):
     @app.cli.command('sync-market-data')
     @with_appcontext
     def sync_market_data_cmd():
-        """Refresh shares outstanding (EDGAR) and last price/market cap (Alpaca)."""
+        """Refresh shares outstanding (EDGAR) and last price/market cap (FMP)."""
         from app.models.company import Company
         from app.services.market_data.sync import sync_market_data
         shares, prices = sync_market_data()
@@ -32,6 +32,24 @@ def register_cli(app):
             f'companies; {caps} companies have market caps, {missing} priced '
             f'companies still missing share counts (backfills on next runs)'
         )
+
+    @app.cli.command('check-market-data')
+    @with_appcontext
+    def check_market_data_cmd():
+        """Live-check FMP quotes/bars against the assumptions prices.py makes."""
+        from app.models.company import Company
+        from app.services.market_data.check import FAIL, run_checks
+        from app.services.market_data.prices import QUOTE_BATCH
+        tickers = [c.ticker for c in (Company.query
+                                      .filter(Company.ticker.isnot(None))
+                                      .filter(Company.market_cap.isnot(None))
+                                      .order_by(Company.market_cap.desc())
+                                      .limit(QUOTE_BATCH))]
+        results = run_checks(tickers)
+        for name, status, detail in results:
+            click.echo(f'[{status.upper():4}] {name}: {detail}')
+        if any(status == FAIL for _, status, _ in results):
+            raise SystemExit(1)
 
     @app.cli.command('sync-fundamentals')
     @click.option('--symbols', default='', help='Comma-separated tickers to sync (default: the cron queue).')

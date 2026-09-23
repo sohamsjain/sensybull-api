@@ -19,15 +19,13 @@ def no_cache():
         yield
 
 
-def _snapshot(last=None, daily=None, prev=None):
-    snap = {}
-    if last is not None:
-        snap["latestTrade"] = {"p": last, "t": "2026-08-06T18:22:03Z"}
-    if daily is not None:
-        snap["dailyBar"] = {"c": daily, "t": "2026-08-06T04:00:00Z"}
-    if prev is not None:
-        snap["prevDailyBar"] = {"c": prev, "t": "2026-08-05T04:00:00Z"}
-    return snap
+# 2026-08-06T18:22:03Z
+QUOTE_TS = int(datetime(2026, 8, 6, 18, 22, 3, tzinfo=timezone.utc).timestamp())
+
+
+def _fmp_quote(symbol="AAPL", price=None, prev=None, ts=QUOTE_TS):
+    """An FMP /batch-quote record, trimmed to the fields we read."""
+    return {"symbol": symbol, "price": price, "previousClose": prev, "timestamp": ts}
 
 
 class TestCompanyQuote:
@@ -45,9 +43,9 @@ class TestCompanyQuote:
         assert resp.get_json()["error"] == "no_ticker"
 
     def test_returns_price_and_day_change(self, client, auth_headers, sample_company):
-        snapshots = {"AAPL": _snapshot(last=214.32, daily=213.90, prev=216.18)}
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   return_value=snapshots):
+        quotes = {"AAPL": _fmp_quote(price=214.32, prev=216.18)}
+        with patch("app.services.market_data.prices.get_quotes",
+                   return_value=quotes):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/quote",
                 headers=auth_headers)
@@ -62,26 +60,27 @@ class TestCompanyQuote:
         assert data["as_of"] == "2026-08-06T18:22:03Z"
         assert data["stale"] is False
 
-    def test_falls_back_to_daily_bar_when_no_trade(
-            self, client, auth_headers, sample_company):
-        """Thin IEX names can have no trade today — use the daily bar."""
-        snapshots = {"AAPL": _snapshot(daily=213.90, prev=216.18)}
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   return_value=snapshots):
+    def test_zero_price_counts_as_no_price(
+            self, client, auth_headers, sample_company, db_session):
+        """FMP reports a halted/unpriced symbol as price 0 — not a real print."""
+        sample_company.last_price = Decimal("210.5000")
+        db_session.session.commit()
+        with patch("app.services.market_data.prices.get_quotes",
+                   return_value={"AAPL": _fmp_quote(price=0, prev=216.18)}):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/quote",
                 headers=auth_headers)
 
         data = resp.get_json()
-        assert data["price"] == 213.90
-        assert data["as_of"] == "2026-08-06T04:00:00Z"
+        assert data["price"] == 210.5
+        assert data["stale"] is True
 
     def test_missing_prev_close_leaves_change_null(
             self, client, auth_headers, sample_company):
         """A freshly listed symbol has no previous session to compare to."""
-        snapshots = {"AAPL": _snapshot(last=214.32)}
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   return_value=snapshots):
+        quotes = {"AAPL": _fmp_quote(price=214.32)}
+        with patch("app.services.market_data.prices.get_quotes",
+                   return_value=quotes):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/quote",
                 headers=auth_headers)
@@ -91,16 +90,16 @@ class TestCompanyQuote:
         assert data["change"] is None
         assert data["change_pct"] is None
 
-    def test_alpaca_down_falls_back_to_synced_price(
+    def test_fmp_down_falls_back_to_synced_price(
             self, client, auth_headers, sample_company, db_session):
-        from app.services.market_data.alpaca import AlpacaError
+        from app.services.market_data.prices import MarketDataError
 
         sample_company.last_price = Decimal("210.5000")
         sample_company.price_updated_at = datetime(2026, 8, 5, 21, 0, tzinfo=timezone.utc)
         db_session.session.commit()
 
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   side_effect=AlpacaError("down")):
+        with patch("app.services.market_data.prices.get_quotes",
+                   side_effect=MarketDataError("down")):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/quote",
                 headers=auth_headers)
@@ -111,12 +110,12 @@ class TestCompanyQuote:
         assert data["stale"] is True
         assert data["change_pct"] is None
 
-    def test_alpaca_down_without_synced_price_is_503(
+    def test_fmp_down_without_synced_price_is_503(
             self, client, auth_headers, sample_company):
-        from app.services.market_data.alpaca import AlpacaError
+        from app.services.market_data.prices import MarketDataError
 
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   side_effect=AlpacaError("down")):
+        with patch("app.services.market_data.prices.get_quotes",
+                   side_effect=MarketDataError("down")):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/quote",
                 headers=auth_headers)
@@ -124,8 +123,8 @@ class TestCompanyQuote:
         assert resp.status_code == 503
 
     def test_unknown_symbol_is_503(self, client, auth_headers, sample_company):
-        """Alpaca omits symbols it doesn't know rather than erroring."""
-        with patch("app.services.market_data.alpaca.get_snapshots",
+        """FMP omits symbols it doesn't know rather than erroring."""
+        with patch("app.services.market_data.prices.get_quotes",
                    return_value={}):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/quote",
@@ -134,13 +133,16 @@ class TestCompanyQuote:
         assert resp.status_code == 503
 
 
-def test_snapshot_price_prefers_latest_trade():
-    from app.services.market_data import alpaca
+def test_quote_readers():
+    from app.services.market_data import prices
 
-    assert alpaca.snapshot_price(_snapshot(last=10, daily=11, prev=12)) == 10
-    assert alpaca.snapshot_price(_snapshot(daily=11, prev=12)) == 11
-    assert alpaca.snapshot_price(_snapshot(prev=12)) == 12
-    assert alpaca.snapshot_price({}) is None
+    quote = _fmp_quote(price=10, prev=12)
+    assert prices.quote_price(quote) == 10
+    assert prices.quote_prev_close(quote) == 12
+    assert prices.quote_time(quote) == "2026-08-06T18:22:03Z"
+    assert prices.quote_price(None) is None
+    assert prices.quote_prev_close(_fmp_quote(price=10)) is None
+    assert prices.quote_time(_fmp_quote(ts=None)) is None
 
 
 class TestCompanyQuotesBatch:
@@ -152,12 +154,12 @@ class TestCompanyQuotesBatch:
 
     def test_returns_a_quote_per_company(
             self, client, auth_headers, sample_company, sample_company_2):
-        snapshots = {
-            "AAPL": _snapshot(last=214.32, prev=216.18),
-            "TSLA": _snapshot(last=402.10, prev=390.00),
+        quotes = {
+            "AAPL": _fmp_quote("AAPL", price=214.32, prev=216.18),
+            "TSLA": _fmp_quote("TSLA", price=402.10, prev=390.00),
         }
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   return_value=snapshots) as get_snapshots:
+        with patch("app.services.market_data.prices.get_quotes",
+                   return_value=quotes) as get_quotes:
             resp = client.get(
                 f"/api/v1/companies/quotes?ids={sample_company.id},{sample_company_2.id}",
                 headers=auth_headers)
@@ -167,7 +169,7 @@ class TestCompanyQuotesBatch:
         assert quotes[str(sample_company.id)]["price"] == 214.32
         assert quotes[str(sample_company_2.id)]["change_pct"] == pytest.approx(3.1, abs=0.01)
         # Every miss folds into a single upstream call
-        assert get_snapshots.call_count == 1
+        assert get_quotes.call_count == 1
 
     def test_empty_ids_is_an_empty_map(self, client, auth_headers):
         resp = client.get("/api/v1/companies/quotes", headers=auth_headers)
@@ -176,12 +178,12 @@ class TestCompanyQuotesBatch:
 
     def test_omits_companies_without_a_price(
             self, client, auth_headers, sample_company, db_session):
-        """No ticker, unknown to Alpaca, and never synced — all just absent."""
+        """No ticker, unknown to FMP, and never synced — all just absent."""
         tickerless = Company(name="Private Holdings LLC", cik="0009999999")
         db_session.session.add(tickerless)
         db_session.session.commit()
 
-        with patch("app.services.market_data.alpaca.get_snapshots", return_value={}):
+        with patch("app.services.market_data.prices.get_quotes", return_value={}):
             resp = client.get(
                 f"/api/v1/companies/quotes?ids={sample_company.id},{tickerless.id}",
                 headers=auth_headers)
@@ -189,16 +191,16 @@ class TestCompanyQuotesBatch:
         assert resp.status_code == 200
         assert resp.get_json()["quotes"] == {}
 
-    def test_alpaca_down_falls_back_to_synced_prices(
+    def test_fmp_down_falls_back_to_synced_prices(
             self, client, auth_headers, sample_company, db_session):
-        from app.services.market_data.alpaca import AlpacaError
+        from app.services.market_data.prices import MarketDataError
 
         sample_company.last_price = Decimal("210.5000")
         sample_company.price_updated_at = datetime(2026, 8, 5, 21, 0, tzinfo=timezone.utc)
         db_session.session.commit()
 
-        with patch("app.services.market_data.alpaca.get_snapshots",
-                   side_effect=AlpacaError("down")):
+        with patch("app.services.market_data.prices.get_quotes",
+                   side_effect=MarketDataError("down")):
             resp = client.get(
                 f"/api/v1/companies/quotes?ids={sample_company.id}",
                 headers=auth_headers)

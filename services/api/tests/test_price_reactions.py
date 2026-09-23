@@ -105,17 +105,17 @@ class TestSubscriberScheduling:
 
 class TestWorkerTick:
     def _run_tick(self, app, bars_by_call):
-        """Run one tick with alpaca.get_bars returning canned data.
+        """Run one tick with prices.get_bars returning canned data.
 
-        bars_by_call: {("1Day"|"1Min"): bars list} — keyed by timeframe.
+        bars_by_call: {("1day"|"1min"): bars list} — keyed by timeframe.
         """
         sio = MagicMock()
 
-        def fake_get_bars(symbols, timeframe, start, end=None, **kwargs):
-            return {symbols[0]: bars_by_call.get(timeframe, [])}
+        def fake_get_bars(symbol, timeframe, start, end=None):
+            return bars_by_call.get(timeframe, [])
 
         with patch.object(reaction_worker, "CALL_DELAY", 0), \
-             patch.object(reaction_worker.alpaca, "get_bars", side_effect=fake_get_bars):
+             patch.object(reaction_worker.prices, "get_bars", side_effect=fake_get_bars):
             done = reaction_worker.tick(app, sio)
         return done, sio
 
@@ -132,7 +132,7 @@ class TestWorkerTick:
             + _daily_bars(t0 + timedelta(days=1), [110.0, 111.0, 112.0, 113.0, 114.0,
                                                    115.0, 116.0, 117.0])
         )
-        done, sio = self._run_tick(app, {"1Min": minute, "1Day": daily})
+        done, sio = self._run_tick(app, {"1min": minute, "1day": daily})
 
         assert done == 6
         rows = {r.interval: r for r in PriceReaction.query.all()}
@@ -157,7 +157,7 @@ class TestWorkerTick:
 
         minute = _minute_bars(t0, [100.0, 100.5, 101.0, 101.0, 101.0, 101.0, 101.0])
         daily = _daily_bars(t0 - timedelta(days=20), [100.0] * 20)  # ATR = 2
-        self._run_tick(app, {"1Min": minute, "1Day": daily})
+        self._run_tick(app, {"1min": minute, "1day": daily})
 
         row = PriceReaction.query.first()
         assert row.status == "done"
@@ -173,7 +173,7 @@ class TestWorkerTick:
         # No minute bars before t0; first print 2h after (next open)
         minute = _minute_bars(t0 + timedelta(hours=2), [95.0, 95.0])
         daily = _daily_bars(t0 - timedelta(days=20), [100.0] * 19)
-        self._run_tick(app, {"1Min": minute, "1Day": daily})
+        self._run_tick(app, {"1min": minute, "1day": daily})
 
         row = PriceReaction.query.first()
         assert row.status == "done"
@@ -189,7 +189,7 @@ class TestWorkerTick:
         event = _make_event(db_session, sample_company, t0)
         _add_rows(db_session, event, intervals=["5m", "1d"])
 
-        self._run_tick(app, {})  # Alpaca knows nothing about this symbol
+        self._run_tick(app, {})  # FMP knows nothing about this symbol
 
         rows = PriceReaction.query.all()
         assert all(r.status == "skipped" for r in rows)
@@ -206,17 +206,17 @@ class TestWorkerTick:
         assert row.status == "pending"
         assert row.attempts == 1
 
-    def test_alpaca_error_increments_attempts_then_fails(self, app, db_session,
-                                                         sample_company):
+    def test_market_data_error_increments_attempts_then_fails(self, app, db_session,
+                                                              sample_company):
         t0 = datetime.now(timezone.utc) - timedelta(days=1)
         event = _make_event(db_session, sample_company, t0)
         _add_rows(db_session, event, intervals=["5m"])
 
         def boom(*args, **kwargs):
-            raise reaction_worker.alpaca.AlpacaError("rate limited")
+            raise reaction_worker.prices.MarketDataError("rate limited")
 
         with patch.object(reaction_worker, "CALL_DELAY", 0), \
-             patch.object(reaction_worker.alpaca, "get_bars", side_effect=boom):
+             patch.object(reaction_worker.prices, "get_bars", side_effect=boom):
             for _ in range(reaction_worker.MAX_ATTEMPTS):
                 reaction_worker.tick(app, MagicMock())
 
@@ -231,7 +231,7 @@ class TestWorkerTick:
 
         minute = _minute_bars(t0, [100.0] * 10)
         daily = _daily_bars(t0 - timedelta(days=20), [100.0] * 20)
-        done, sio = self._run_tick(app, {"1Min": minute, "1Day": daily})
+        done, sio = self._run_tick(app, {"1min": minute, "1day": daily})
 
         assert done == 1
         emits = [c for c in sio.emit.call_args_list if c.args[0] == "price_reaction"]
@@ -247,7 +247,7 @@ class TestWorkerTick:
 
         minute = _minute_bars(t0, [100.0, 100.0, 100.0, 100.0, 100.0, 108.0])
         daily = _daily_bars(t0 - timedelta(days=20), [100.0] * 20)
-        self._run_tick(app, {"1Min": minute, "1Day": daily})
+        self._run_tick(app, {"1min": minute, "1day": daily})
 
         payload = FilingEvent.query.get(event.id).to_ws_payload()
         assert payload["explosive"] is True

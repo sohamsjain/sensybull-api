@@ -95,16 +95,9 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
     TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME')
 
-    # Market data (Alpaca). Modules under app/services/market_data read these
-    # from os.environ directly (same convention as SEC_USER_AGENT); listed
-    # here for documentation and .env completeness.
-    ALPACA_API_KEY_ID = os.environ.get('ALPACA_API_KEY_ID')
-    ALPACA_API_SECRET_KEY = os.environ.get('ALPACA_API_SECRET_KEY')
-    ALPACA_DATA_BASE_URL = os.environ.get('ALPACA_DATA_BASE_URL') or 'https://data.alpaca.markets'
-    ALPACA_FEED = os.environ.get('ALPACA_FEED') or 'iex'  # "sip" on paid plans
-
-    # Fundamentals (Financial Modeling Prep). The sync reads FMP_API_KEY from
-    # os.environ; these are listed for documentation and .env completeness.
+    # Financial Modeling Prep — fundamentals and market data (quotes, bars,
+    # price reactions; Alpaca was retired Sept 2026). Both read FMP_API_KEY
+    # from os.environ; these are listed for documentation and .env completeness.
     FMP_API_KEY = os.environ.get('FMP_API_KEY')
     FMP_CALLS_PER_MINUTE = int(os.environ.get('FMP_CALLS_PER_MINUTE') or 600)
     # First visit to a never-synced ticker backfills it in the background
