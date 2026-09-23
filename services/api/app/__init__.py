@@ -107,6 +107,7 @@ def create_app(config_class=Config):
     from app.routes.watchlist_inbox import watchlist_inbox_bp
     from app.routes.share import share_bp
     from app.routes.fundamentals import fundamentals_bp
+    from app.routes.discovery import discovery_bp
 
     # API v1 routes
     API_V1 = '/api/v1'
@@ -122,6 +123,7 @@ def create_app(config_class=Config):
     # Legacy alias for the old frontend; TODO remove after web deploy
     app.register_blueprint(watchlist_inbox_bp, url_prefix=f'{API_V1}/chats', name='chats_compat')
     app.register_blueprint(share_bp, url_prefix=f'{API_V1}/share')
+    app.register_blueprint(discovery_bp, url_prefix=f'{API_V1}/discovery')
 
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)
@@ -148,6 +150,35 @@ def create_app(config_class=Config):
             'deepLinking:true,presets:[SwaggerUIBundle.presets.apis]})</script>'
             '</body></html>'
         )
+
+    # ── Agent / crawler discovery ─────────────────────────────────────
+    @app.route('/.well-known/api-catalog')
+    def api_catalog():
+        """RFC 9727 API catalog: where the spec, docs and health check live."""
+        from app.openapi import api_catalog_linkset
+        origin = app.config.get('PUBLIC_API_URL') or flask_request.host_url
+        origin = origin.rstrip('/')
+        if origin.startswith('http://') and flask_request.host.split(':')[0] not in (
+                'localhost', '127.0.0.1'):
+            origin = 'https://' + origin[len('http://'):]
+        resp = jsonify(api_catalog_linkset(origin))
+        resp.mimetype = 'application/linkset+json'
+        resp.headers['Link'] = f'<{origin}/.well-known/api-catalog>; rel="api-catalog"'
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp
+
+    @app.route('/robots.txt')
+    def robots_txt():
+        # The API host carries no pages to index: the docs and the discovery
+        # files are the only things worth a crawler's time. The site's own
+        # robots.txt (sensybull-web) holds the real policy.
+        body = (
+            'User-agent: *\n'
+            'Allow: /docs\n'
+            'Allow: /.well-known/\n'
+            'Disallow: /\n'
+        )
+        return body, 200, {'Content-Type': 'text/plain; charset=utf-8'}
 
     @app.route('/health')
     def health():

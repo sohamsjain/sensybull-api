@@ -17,6 +17,7 @@ OPENAPI_SPEC = {
     },
     "servers": [
         {"url": "/", "description": "Current server"},
+        {"url": "https://api.sensybull.com", "description": "Production"},
     ],
 
     # ── Security ──────────────────────────────────────────────────────────
@@ -194,6 +195,45 @@ OPENAPI_SPEC = {
                         },
                     },
                     "deal_terms": {"type": "object", "additionalProperties": True},
+                    "evidence": {
+                        "type": "array",
+                        "description": (
+                            "Up to 3 verbatim quotes from the source document, each "
+                            "verified against it at ingest. Absent on facts-only "
+                            "briefings, press releases and older events."
+                        ),
+                        "items": {"$ref": "#/components/schemas/Evidence"},
+                    },
+                },
+            },
+            "Evidence": {
+                "type": "object",
+                "properties": {
+                    "quote": {"type": "string", "description": "The matched span of the source document, never model prose"},
+                    "event_type": {"type": "string", "nullable": True},
+                    "source": {"type": "string", "nullable": True, "description": "Which document the quote came from (primary document or an exhibit)"},
+                    "doc_url": {"type": "string", "format": "uri", "nullable": True},
+                    "url": {"type": "string", "format": "uri", "nullable": True, "description": "doc_url plus a #:~:text= fragment that highlights the quote"},
+                    "highlighted": {"type": "boolean"},
+                },
+            },
+            "Quote": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "price": {"type": "number"},
+                    "prev_close": {"type": "number", "nullable": True},
+                    "change": {"type": "number", "nullable": True},
+                    "change_pct": {"type": "number", "nullable": True},
+                    "as_of": {"type": "string", "format": "date-time", "nullable": True},
+                    "stale": {"type": "boolean", "description": "True when this is the daily-synced price rather than a live one"},
+                },
+            },
+            "BulkCompaniesRequest": {
+                "type": "object",
+                "required": ["company_ids"],
+                "properties": {
+                    "company_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "minItems": 1},
                 },
             },
             "FilingEvent": {
@@ -462,7 +502,7 @@ OPENAPI_SPEC = {
             "get": {
                 "tags": ["Events"],
                 "summary": "List canonical event types",
-                "description": "Returns the 34 canonical event type labels used for classification. Use these values in the event_type filter.",
+                "description": "Returns the 12 canonical event type labels (including \"Other\") used for classification. Use these values in the event_type filter.",
                 "responses": {
                     "200": {
                         "description": "Event type list",
@@ -816,3 +856,230 @@ OPENAPI_SPEC = {
         {"name": "Watchlist", "description": "Watchlist inbox: per-company read state, unread counts, mute"},
     ],
 }
+
+
+# ── Routes added after the original spec ──────────────────────────────────
+# Kept as a separate block so the diff of each addition stays readable.
+
+_SYMBOL_PARAM = {
+    "name": "symbol", "in": "path", "required": True,
+    "schema": {"type": "string", "example": "AAPL"},
+    "description": "Ticker symbol, case-insensitive (class suffixes as BRK.B or BRK-B)",
+}
+_COMPANY_ID_PARAM = {
+    "name": "company_id", "in": "path", "required": True,
+    "schema": {"type": "string", "format": "uuid"},
+}
+
+
+def _bulk(summary: str, extra_props: dict | None = None) -> dict:
+    body = {"$ref": "#/components/schemas/BulkCompaniesRequest"}
+    if extra_props:
+        body = {"allOf": [body, {"type": "object", "properties": extra_props}]}
+    return {
+        "tags": ["Watchlist"],
+        "summary": summary,
+        "description": (
+            "Acts on the intersection of `company_ids` with the companies the caller "
+            "follows. Unknown ids are dropped; the echoed `company_ids` is what was "
+            "actually changed. Only an empty intersection is a 403."
+        ),
+        "security": [{"BearerAuth": []}],
+        "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
+        "responses": {
+            "200": {"description": "Applied to the echoed company_ids"},
+            "400": {"description": "company_ids missing, not a list of strings, or too long"},
+            "403": {"description": "None of the ids are companies the caller follows"},
+        },
+    }
+
+
+OPENAPI_SPEC["paths"].update({
+    "/api/v1/events/all/{event_id}": {
+        "get": {
+            "tags": ["Events"],
+            "summary": "Get a single event (public)",
+            "description": "Backs the public per-event permalinks. No authentication required.",
+            "parameters": [{"name": "event_id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}],
+            "responses": {
+                "200": {"description": "Event", "content": {"application/json": {"schema": {"type": "object", "properties": {"event": {"$ref": "#/components/schemas/FilingEvent"}}}}}},
+                "404": {"description": "Event not found"},
+            },
+        },
+    },
+    "/api/v1/companies/search": {
+        "get": {
+            "tags": ["Companies"],
+            "summary": "Company typeahead (public)",
+            "description": "Ticker or name search. Companies with a fundamentals page rank first, then by market cap.",
+            "parameters": [
+                {"name": "q", "in": "query", "required": True, "schema": {"type": "string"}},
+                {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 10, "minimum": 1, "maximum": 50}},
+            ],
+            "responses": {
+                "200": {"description": "Matches", "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {"results": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "format": "uuid"},
+                            "name": {"type": "string"},
+                            "ticker": {"type": "string", "nullable": True},
+                            "market_cap": {"type": "number", "nullable": True},
+                            "industry": {"type": "string", "nullable": True},
+                            "has_fundamentals": {"type": "boolean"},
+                        },
+                    }}},
+                }}}},
+                "400": {"description": "q is required"},
+                "429": {"description": "Rate limited (120/min)"},
+            },
+        },
+    },
+    "/api/v1/companies/{company_id}/bars": {
+        "get": {
+            "tags": ["Market data"],
+            "summary": "OHLCV bars for the price chart",
+            "security": [{"BearerAuth": []}],
+            "parameters": [
+                _COMPANY_ID_PARAM,
+                {"name": "timeframe", "in": "query", "schema": {"type": "string", "enum": ["1D", "1H", "15Min"], "default": "1D"}},
+                {"name": "lookback", "in": "query", "schema": {"type": "string", "enum": ["1M", "3M", "6M", "1Y", "2Y", "5Y"], "default": "3M"}},
+                {"name": "end", "in": "query", "schema": {"type": "string"}, "description": "ISO date or timestamp; pages backwards through history"},
+            ],
+            "responses": {
+                "200": {"description": "Bars"},
+                "400": {"description": "Bad timeframe, lookback or end"},
+                "422": {"description": "Company has no ticker"},
+                "503": {"description": "Market data temporarily unavailable"},
+            },
+        },
+    },
+    "/api/v1/companies/{company_id}/quote": {
+        "get": {
+            "tags": ["Market data"],
+            "summary": "Last price and day change for one company",
+            "security": [{"BearerAuth": []}],
+            "parameters": [_COMPANY_ID_PARAM],
+            "responses": {
+                "200": {"description": "Quote", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Quote"}}}},
+                "422": {"description": "Company has no ticker"},
+                "503": {"description": "No price available"},
+            },
+        },
+    },
+    "/api/v1/companies/quotes": {
+        "get": {
+            "tags": ["Market data"],
+            "summary": "Quotes for up to 120 companies in one call",
+            "description": "Companies with no price at all are absent from the map rather than an error.",
+            "security": [{"BearerAuth": []}],
+            "parameters": [{"name": "ids", "in": "query", "required": True, "schema": {"type": "string"}, "description": "Comma-separated company ids"}],
+            "responses": {
+                "200": {"description": "Quotes keyed by company id", "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {"quotes": {"type": "object", "additionalProperties": {"$ref": "#/components/schemas/Quote"}}},
+                }}}},
+            },
+        },
+    },
+    "/api/v1/fundamentals/{symbol}": {
+        "get": {
+            "tags": ["Fundamentals"],
+            "summary": "Company financials page payload (public)",
+            "description": (
+                "One column-oriented payload: header ratios, growth grids, pros/cons, then "
+                "`quarterly` and `annual` income, balance, cashflow and ratio tables, oldest "
+                "to newest, amounts in whole dollars. A never-synced ticker starts a backfill "
+                "and answers 202 with `status: building`."
+            ),
+            "parameters": [_SYMBOL_PARAM],
+            "responses": {
+                "200": {"description": "status is ready, unavailable or empty", "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["ready", "building", "unavailable", "empty"]},
+                        "company": {"type": "object"},
+                        "ratios": {"type": "object"},
+                        "quarterly": {"type": "object"},
+                        "annual": {"type": "object"},
+                    },
+                    "additionalProperties": True,
+                }}}},
+                "202": {"description": "Backfill started; poll again"},
+                "400": {"description": "Invalid symbol"},
+                "404": {"description": "Unknown symbol"},
+                "429": {"description": "Rate limited (120/min)"},
+            },
+        },
+    },
+    "/api/v1/fundamentals/{symbol}/documents": {
+        "get": {
+            "tags": ["Fundamentals"],
+            "summary": "EDGAR 10-K/10-Q/proxy links and recent briefings (public)",
+            "parameters": [_SYMBOL_PARAM],
+            "responses": {
+                "200": {"description": "Documents", "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {"type": "string"},
+                        "cik": {"type": "string", "nullable": True},
+                        "edgar_url": {"type": "string", "format": "uri", "nullable": True},
+                        "filings": {"type": "object"},
+                        "filings_error": {"type": "string", "nullable": True},
+                        "updates": {"type": "array", "items": {"type": "object"}},
+                    },
+                }}}},
+                "404": {"description": "Unknown symbol"},
+            },
+        },
+    },
+    "/api/v1/discovery/sitemap": {
+        "get": {
+            "tags": ["Discovery"],
+            "summary": "Indexable URLs for the web sitemap (public)",
+            "description": (
+                "Companies with a fundamentals page (by market cap) and recent events that "
+                "carry verified evidence quotes. Cached for 6 hours."
+            ),
+            "responses": {
+                "200": {"description": "Sitemap entries", "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {
+                        "companies": {"type": "array", "items": {"type": "object", "properties": {
+                            "symbol": {"type": "string"},
+                            "lastmod": {"type": "string", "format": "date-time", "nullable": True},
+                        }}},
+                        "events": {"type": "array", "items": {"type": "object", "properties": {
+                            "id": {"type": "string", "format": "uuid"},
+                            "lastmod": {"type": "string", "format": "date-time", "nullable": True},
+                        }}},
+                    },
+                }}}},
+            },
+        },
+    },
+    "/api/v1/watchlist/read": {"post": _bulk("Mark several companies as read")},
+    "/api/v1/watchlist/mute": {"put": _bulk("Mute or unmute several companies", {"muted": {"type": "boolean"}})},
+    "/api/v1/watchlist/remove": {"post": _bulk("Remove several companies from the caller's watchlists")},
+})
+
+OPENAPI_SPEC["tags"] += [
+    {"name": "Market data", "description": "Alpaca-backed chart bars and quotes, Redis-cached"},
+    {"name": "Fundamentals", "description": "Stored financial statements behind the public company pages"},
+    {"name": "Discovery", "description": "Public URL lists for crawlers and agents"},
+]
+
+
+def api_catalog_linkset(origin: str) -> dict:
+    """RFC 9727 API catalog (an RFC 9264 linkset) for this API host."""
+    return {
+        "linkset": [
+            {
+                "anchor": f"{origin}/api/v1",
+                "service-desc": [{"href": f"{origin}/docs/openapi.json", "type": "application/json"}],
+                "service-doc": [{"href": f"{origin}/docs", "type": "text/html"}],
+                "status": [{"href": f"{origin}/health", "type": "application/json"}],
+            },
+        ],
+    }
