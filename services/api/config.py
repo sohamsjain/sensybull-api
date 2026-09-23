@@ -56,6 +56,11 @@ class Config:
     # Public origin used in shareable "Track on Sensybull" links (falls back
     # to FRONTEND_URL; set explicitly if the app runs behind another host)
     SHARE_BASE_URL = os.environ.get('SHARE_BASE_URL')
+    # Public origin of this API (e.g. https://api.sensybull.com), used for the
+    # absolute links in /.well-known/api-catalog. Unset: derived from the
+    # request, upgraded to https off localhost (Render terminates TLS ahead
+    # of the app, so the request itself says http).
+    PUBLIC_API_URL = os.environ.get('PUBLIC_API_URL')
     SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL') or 'support@example.com'
 
     # Email (Resend)
