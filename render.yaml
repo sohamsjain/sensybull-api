@@ -100,8 +100,8 @@ services:
         generateValue: true
       - key: JWT_SECRET_KEY
         generateValue: true
-      - key: SEC_USER_AGENT
-        sync: false
+      # Every step is FMP now (company list, shares, prices, fundamentals);
+      # the cron no longer calls the SEC, so it carries no SEC_USER_AGENT.
       - key: FMP_API_KEY
         sync: false
       - key: FMP_CALLS_PER_MINUTE

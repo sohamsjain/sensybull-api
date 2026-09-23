@@ -76,7 +76,7 @@ A publicly traded company, loaded from SEC EDGAR's company database.
 - `filing_events` → 1:N FilingEvent
 - `watchlists` → N:M Watchlist (via join table)
 
-**How companies get loaded:** See [[Company Loading]] — bulk-imported from SEC's `company_tickers.json` on first startup, or via the `load_companies.py` script.
+**How companies get loaded:** See [[Company Loading]] — synced daily from FMP's listed common stocks (`flask sync-companies`); `listed` marks rows still in that universe, and `company_ticker_alias` keeps former tickers and secondary share classes resolving.
 
 ---
 

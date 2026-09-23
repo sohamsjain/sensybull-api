@@ -31,6 +31,8 @@ PATH_CASHFLOW = '/cash-flow-statement'
 PATH_DIVIDENDS = '/dividends'
 PATH_EOD_LIGHT = '/historical-price-eod/light'
 PATH_EARNINGS_CALENDAR = '/earnings-calendar'
+PATH_SCREENER = '/company-screener'
+PATH_SHARES_FLOAT_ALL = '/shares-float-all'
 
 # How much history to hold. Annual: everything FMP has. Quarterly: 15 years
 # (the table shows 12 quarters; row charts rarely want more than 60).
@@ -154,6 +156,17 @@ class FMPClient:
     def earnings_calendar(self, start: date, end: date) -> list[dict]:
         return self._list(PATH_EARNINGS_CALENDAR,
                           **{'from': start.isoformat(), 'to': end.isoformat()})
+
+    def screener(self, **filters) -> list[dict]:
+        """Company screener rows: symbol, companyName, marketCap, price,
+        volume, exchangeShortName, sector, industry, isEtf, isFund, …"""
+        params = {k: (str(v).lower() if isinstance(v, bool) else v) for k, v in filters.items()}
+        return self._list(PATH_SCREENER, **params)
+
+    def shares_float_page(self, page: int, limit: int) -> list[dict]:
+        """One page of every symbol's share counts: symbol, date,
+        outstandingShares, floatShares, freeFloat."""
+        return self._list(PATH_SHARES_FLOAT_ALL, page=page, limit=limit)
 
     def _list(self, path, **params) -> list[dict]:
         data = self.get(path, **params)

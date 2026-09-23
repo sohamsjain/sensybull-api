@@ -1,5 +1,5 @@
 from app.models.user import User  # noqa: F401
-from app.models.company import Company  # noqa: F401
+from app.models.company import Company, CompanyTickerAlias  # noqa: F401
 from app.models.watchlist import Watchlist  # noqa: F401
 from app.models.filing import Filing  # noqa: F401
 from app.models.filing_event import FilingEvent  # noqa: F401

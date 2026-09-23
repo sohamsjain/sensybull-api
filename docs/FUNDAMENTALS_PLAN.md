@@ -49,10 +49,10 @@ real company page — RELIANCE or TCS — and tell me what I have wrong or misse
 | Already exists | Where | Reuse |
 | --- | --- | --- |
 | `Company` table: ticker, CIK, SIC, shares outstanding, last price, market cap, ATR | `services/api/app/models/company.py` | The anchor row. Fundamentals hang off `company_id`. `market_cap`/`last_price` stay the price source of truth. |
-| Daily cron: `sync-companies` + `sync-market-data` (EDGAR shares × FMP price — Alpaca until Sept 2026) | `Dockerfile.cron`, `render.yaml` | Add `sync-fundamentals` to the same cron chain, or a second cron (see 5.3). |
+| Daily cron: `sync-companies` + `sync-market-data` (all FMP since Sept 2026: company universe, shares, prices — the SEC ticker list and EDGAR share counts are gone) | `Dockerfile.cron`, `render.yaml` | Add `sync-fundamentals` to the same cron chain, or a second cron (see 5.3). |
 | Redis JSON cache helpers that no-op without Redis | `services/market_data/cache.py` | Response cache for the new endpoints. |
 | FMP bars/quote proxies (were Alpaca until Sept 2026) | `routes/companies.py`, `market_data/prices.py` | Price chart ≤ 5Y, live price in the header. |
-| EDGAR `companyfacts`/`frames` client with SEC rate limiting | `market_data/edgar_facts.py` | Later: XBRL cross-check of FMP numbers; EDGAR `submissions` for the Documents section. |
+| ~~EDGAR `companyfacts`/`frames` client~~ (deleted Sept 2026 — shares come from FMP) | ~~`market_data/edgar_facts.py`~~ | Later: XBRL cross-check of FMP numbers; EDGAR `submissions` for the Documents section. |
 | SIC → sector mapping | `utils/sectors.py` | Fallback when FMP has no industry. |
 | Public SSR page pattern with `generateMetadata` + `fetch(..., { next: { revalidate } })` | web `src/app/add/[symbol]/page.tsx` | The company page is built the same way. |
 | Design system: tokens, `Table/TH/TD numeric`, `Section`, `Chip/SegmentedControl`, `Kbd` | web `docs/DESIGN_SYSTEM.md`, `components/ui/` | Every table on the page is the existing `Table` primitive. |
