@@ -44,11 +44,8 @@ class TestCompanyBars:
         assert resp.status_code == 400
 
     def test_returns_bars(self, client, auth_headers, sample_company):
-        bars = {"AAPL": [
-            {"t": "2026-06-01T04:00:00Z", "o": 100, "h": 105, "l": 99, "c": 104,
-             "v": 1000, "n": 10, "vw": 102},
-        ]}
-        with patch("app.services.market_data.alpaca.get_bars", return_value=bars):
+        bars = [{"t": "2026-06-01T04:00:00Z", "o": 100, "h": 105, "l": 99, "c": 104, "v": 1000}]
+        with patch("app.services.market_data.prices.get_bars", return_value=bars) as get_bars:
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/bars",
                 headers=auth_headers)
@@ -60,20 +57,24 @@ class TestCompanyBars:
         assert data["bars"] == [
             {"t": "2026-06-01T04:00:00Z", "o": 100, "h": 105, "l": 99, "c": 104, "v": 1000},
         ]
+        symbol, timeframe = get_bars.call_args[0][:2]
+        assert (symbol, timeframe) == ("AAPL", "1day")
 
-    def test_alpaca_down_is_503(self, client, auth_headers, sample_company):
-        from app.services.market_data.alpaca import AlpacaError
-        with patch("app.services.market_data.alpaca.get_bars",
-                   side_effect=AlpacaError("down")):
+    def test_market_data_down_is_503(self, client, auth_headers, sample_company):
+        from app.services.market_data.prices import MarketDataError
+        with patch("app.services.market_data.prices.get_bars",
+                   side_effect=MarketDataError("down")):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/bars",
                 headers=auth_headers)
         assert resp.status_code == 503
 
 
-def test_timeframe_whitelist_matches_alpaca_names():
+def test_timeframe_whitelist_maps_to_fmp_intervals():
+    from app.services.market_data import prices
     assert companies_module.BAR_TIMEFRAMES == {
-        "1D": "1Day", "1H": "1Hour", "15Min": "15Min"}
+        "1D": "1day", "1H": "1hour", "15Min": "15min"}
+    assert set(companies_module.BAR_TIMEFRAMES.values()) <= prices.TIMEFRAMES
 
 
 class TestBarsPaging:
@@ -82,12 +83,12 @@ class TestBarsPaging:
     def test_end_date_narrows_the_window(self, client, auth_headers, sample_company):
         captured = {}
 
-        def fake_get_bars(symbols, timeframe, start, end=None, **kwargs):
+        def fake_get_bars(symbol, timeframe, start, end=None):
             captured["start"] = start
             captured["end"] = end
-            return {symbols[0]: []}
+            return []
 
-        with patch("app.services.market_data.alpaca.get_bars", side_effect=fake_get_bars):
+        with patch("app.services.market_data.prices.get_bars", side_effect=fake_get_bars):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/bars"
                 "?timeframe=1D&lookback=3M&end=2026-03-01",
@@ -96,24 +97,24 @@ class TestBarsPaging:
         assert resp.status_code == 200
         # A date-only `end` is read as that day's 00:00 UTC, so the page holds
         # strictly earlier sessions than the caller's earliest bar.
-        assert captured["end"] == "2026-03-01T00:00:00+00:00"
-        assert captured["start"].startswith("2025-11-28")
+        assert captured["end"].isoformat() == "2026-03-01T00:00:00+00:00"
+        assert captured["start"].date().isoformat() == "2025-11-28"
         assert resp.get_json()["end"] == "2026-03-01T00:00:00+00:00"
 
     def test_end_accepts_a_timestamp(self, client, auth_headers, sample_company):
         captured = {}
 
-        def fake_get_bars(symbols, timeframe, start, end=None, **kwargs):
+        def fake_get_bars(symbol, timeframe, start, end=None):
             captured["end"] = end
-            return {symbols[0]: []}
+            return []
 
-        with patch("app.services.market_data.alpaca.get_bars", side_effect=fake_get_bars):
+        with patch("app.services.market_data.prices.get_bars", side_effect=fake_get_bars):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/bars?end=2026-03-01T04:00:00Z",
                 headers=auth_headers)
 
         assert resp.status_code == 200
-        assert captured["end"] == "2026-03-01T04:00:00+00:00"
+        assert captured["end"].isoformat() == "2026-03-01T04:00:00+00:00"
 
     def test_unparseable_end_is_400(self, client, auth_headers, sample_company):
         resp = client.get(
@@ -124,11 +125,11 @@ class TestBarsPaging:
     def test_no_end_leaves_the_window_open(self, client, auth_headers, sample_company):
         captured = {}
 
-        def fake_get_bars(symbols, timeframe, start, end=None, **kwargs):
+        def fake_get_bars(symbol, timeframe, start, end=None):
             captured["end"] = end
-            return {symbols[0]: []}
+            return []
 
-        with patch("app.services.market_data.alpaca.get_bars", side_effect=fake_get_bars):
+        with patch("app.services.market_data.prices.get_bars", side_effect=fake_get_bars):
             resp = client.get(
                 f"/api/v1/companies/{sample_company.id}/bars", headers=auth_headers)
 
@@ -137,7 +138,7 @@ class TestBarsPaging:
         assert resp.get_json()["end"] is None
 
     def test_closed_windows_cache_for_a_day(self, client, auth_headers, sample_company):
-        with patch("app.services.market_data.alpaca.get_bars", return_value={"AAPL": []}), \
+        with patch("app.services.market_data.prices.get_bars", return_value=[]), \
              patch("app.services.market_data.cache.cache_set") as cache_set:
             client.get(
                 f"/api/v1/companies/{sample_company.id}/bars?end=2026-03-01",
@@ -153,7 +154,7 @@ class TestBarsPaging:
 
     def test_pages_cache_separately(self, client, auth_headers, sample_company):
         keys = []
-        with patch("app.services.market_data.alpaca.get_bars", return_value={"AAPL": []}), \
+        with patch("app.services.market_data.prices.get_bars", return_value=[]), \
              patch("app.services.market_data.cache.cache_set",
                    side_effect=lambda k, v, t: keys.append(k)):
             client.get(f"/api/v1/companies/{sample_company.id}/bars",

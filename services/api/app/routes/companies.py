@@ -93,7 +93,7 @@ def get_company(company_id):
 
 
 # timeframe / lookback whitelists for the bars proxy
-BAR_TIMEFRAMES = {'1D': '1Day', '1H': '1Hour', '15Min': '15Min'}
+BAR_TIMEFRAMES = {'1D': '1day', '1H': '1hour', '15Min': '15min'}  # → FMP interval
 BAR_LOOKBACK_DAYS = {'1M': 31, '3M': 93, '6M': 186, '1Y': 366, '2Y': 731, '5Y': 1827}
 # A window that has already closed can never change; a window ending "now" can.
 BARS_CACHE_SECONDS = 300
@@ -124,7 +124,7 @@ def _parse_bars_end(raw: str):
 @companies_bp.route('/<company_id>/bars', methods=['GET'])
 @jwt_required()
 def get_company_bars(company_id):
-    """OHLCV bars for the company's ticker (Alpaca proxy, Redis-cached).
+    """OHLCV bars for the company's ticker (FMP proxy, Redis-cached).
 
     Backs the frontend price chart with event markers. The optional `end`
     param walks backwards through history: the chart passes the earliest bar
@@ -132,7 +132,7 @@ def get_company_bars(company_id):
     that end in the past are immutable, so they cache for a day.
     """
     from datetime import datetime, timedelta, timezone
-    from app.services.market_data import alpaca
+    from app.services.market_data import prices
     from app.services.market_data.cache import cache_get, cache_set
 
     company = Company.query.get_or_404(company_id)
@@ -164,11 +164,10 @@ def get_company_bars(company_id):
     if cached:
         return jsonify(cached)
 
-    symbol = alpaca.normalize_ticker(company.ticker)
+    symbol = prices.normalize_ticker(company.ticker)
     try:
-        bars = alpaca.get_bars(
-            [symbol], BAR_TIMEFRAMES[timeframe], start.isoformat(), end=end_iso)
-    except alpaca.AlpacaError:
+        bars = prices.get_bars(symbol, BAR_TIMEFRAMES[timeframe], start, end=end)
+    except prices.MarketDataError:
         return jsonify({'error': 'Market data temporarily unavailable'}), 503
 
     response = {
@@ -177,10 +176,7 @@ def get_company_bars(company_id):
         'lookback': lookback,
         'start': start.isoformat(),
         'end': end_iso,
-        'bars': [
-            {'t': b['t'], 'o': b['o'], 'h': b['h'], 'l': b['l'], 'c': b['c'], 'v': b['v']}
-            for b in bars.get(symbol, [])
-        ],
+        'bars': bars,
     }
     ttl = BARS_HISTORY_CACHE_SECONDS if end else BARS_CACHE_SECONDS
     cache_set(cache_key, response, ttl)
@@ -189,7 +185,7 @@ def get_company_bars(company_id):
 
 QUOTE_CACHE_SECONDS = 60
 # A feed page asks for ~50 rows; the cap keeps one request from fanning out
-# into an unbounded Alpaca call.
+# into an unbounded batch-quote call.
 MAX_QUOTE_IDS = 120
 
 
@@ -201,7 +197,7 @@ def get_company_quotes():
     Backs the prices shown on every row of the feed and the watchlist, where
     asking per company would mean dozens of requests. Shares the per-ticker
     Redis cache with the single-company route, and folds every cache miss
-    into one Alpaca snapshot call.
+    into one FMP batch-quote call.
 
     GET /companies/quotes?ids=<uuid>,<uuid>,...
       -> {"quotes": {"<company_id>": {...}, ...}}
@@ -209,7 +205,7 @@ def get_company_quotes():
     Companies that are unknown, have no ticker, or have no price at all are
     simply absent from the map — a missing price is not an error here.
     """
-    from app.services.market_data import alpaca
+    from app.services.market_data import prices
     from app.services.market_data.cache import cache_get, cache_set
 
     raw = request.args.get('ids', '')
@@ -225,7 +221,7 @@ def get_company_quotes():
         return jsonify({'quotes': {}})
 
     quotes = {}
-    pending = {}  # alpaca symbol -> [company, ...]
+    pending = {}  # FMP symbol -> [company, ...]
     for company in companies:
         if not company.ticker:
             continue
@@ -233,19 +229,19 @@ def get_company_quotes():
         if cached:
             quotes[str(company.id)] = cached
             continue
-        pending.setdefault(alpaca.normalize_ticker(company.ticker), []).append(company)
+        pending.setdefault(prices.normalize_ticker(company.ticker), []).append(company)
 
-    snapshots = {}
+    fmp_quotes = {}
     if pending:
         try:
-            snapshots = alpaca.get_snapshots(list(pending))
-        except alpaca.AlpacaError:
-            snapshots = {}
+            fmp_quotes = prices.get_quotes(list(pending))
+        except prices.MarketDataError:
+            fmp_quotes = {}
 
     for symbol, symbol_companies in pending.items():
-        snapshot = snapshots.get(symbol)
+        fmp_quote = fmp_quotes.get(symbol)
         for company in symbol_companies:
-            quote = _quote_payload(company, snapshot)
+            quote = _quote_payload(company, fmp_quote)
             if quote is None:
                 continue
             if not quote['stale']:
@@ -260,12 +256,12 @@ def get_company_quotes():
 def get_company_quote(company_id):
     """Last price and day change for the company's ticker.
 
-    Alpaca snapshot proxy, Redis-cached 60s — backs the price shown beside
-    the company name in the watchlist header. When Alpaca is unreachable
+    FMP quote proxy, Redis-cached 60s — backs the price shown beside
+    the company name in the watchlist header. When FMP is unreachable
     this falls back to the price the daily sync stored on the company, so
     the header shows a (stale-flagged) number instead of nothing.
     """
-    from app.services.market_data import alpaca
+    from app.services.market_data import prices
     from app.services.market_data.cache import cache_get, cache_set
 
     company = Company.query.get_or_404(company_id)
@@ -277,14 +273,13 @@ def get_company_quote(company_id):
     if cached:
         return jsonify(cached)
 
-    symbol = alpaca.normalize_ticker(company.ticker)
-    snapshot = None
+    symbol = prices.normalize_ticker(company.ticker)
     try:
-        snapshot = alpaca.get_snapshots([symbol]).get(symbol)
-    except alpaca.AlpacaError:
-        snapshot = None
+        fmp_quote = prices.get_quotes([symbol]).get(symbol)
+    except prices.MarketDataError:
+        fmp_quote = None
 
-    quote = _quote_payload(company, snapshot)
+    quote = _quote_payload(company, fmp_quote)
     if quote is None:
         return jsonify({'error': 'Market data temporarily unavailable'}), 503
     if not quote['stale']:
@@ -292,15 +287,15 @@ def get_company_quote(company_id):
     return jsonify(quote)
 
 
-def _quote_payload(company, snapshot):
+def _quote_payload(company, fmp_quote):
     """Quote dict for a company, or None when there is no price to report.
 
-    Falls back to the daily-synced price (flagged `stale`) when Alpaca has
+    Falls back to the daily-synced price (flagged `stale`) when FMP has
     nothing for the symbol right now.
     """
-    from app.services.market_data import alpaca
+    from app.services.market_data import prices
 
-    price = alpaca.snapshot_price(snapshot) if snapshot else None
+    price = prices.quote_price(fmp_quote)
     if price is None:
         if company.last_price is None:
             return None
@@ -317,11 +312,11 @@ def _quote_payload(company, snapshot):
             'stale': True,
         }
 
-    # Day change is measured against the previous session's close. Alpaca's
-    # prevDailyBar trails dailyBar all session, so this stays "today's move"
-    # during regular hours and after the close, and becomes "since yesterday"
-    # pre-market, which is what a quote should read.
-    prev_close = (snapshot.get('prevDailyBar') or {}).get('c')
+    # Day change is measured against the previous session's close. FMP's
+    # quote is regular-session: pre-market it still reads yesterday's close,
+    # so the change there is 0 until the open rather than an extended-hours
+    # move.
+    prev_close = prices.quote_prev_close(fmp_quote)
     change = change_pct = None
     if prev_close:
         change = round(price - prev_close, 4)
@@ -333,7 +328,7 @@ def _quote_payload(company, snapshot):
         'prev_close': prev_close,
         'change': change,
         'change_pct': change_pct,
-        'as_of': alpaca.snapshot_time(snapshot),
+        'as_of': prices.quote_time(fmp_quote),
         'stale': False,
     }
 

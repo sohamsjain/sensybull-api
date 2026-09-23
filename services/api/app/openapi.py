@@ -1065,7 +1065,7 @@ OPENAPI_SPEC["paths"].update({
 })
 
 OPENAPI_SPEC["tags"] += [
-    {"name": "Market data", "description": "Alpaca-backed chart bars and quotes, Redis-cached"},
+    {"name": "Market data", "description": "FMP-backed chart bars and quotes, Redis-cached"},
     {"name": "Fundamentals", "description": "Stored financial statements behind the public company pages"},
     {"name": "Discovery", "description": "Public URL lists for crawlers and agents"},
 ]

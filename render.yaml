@@ -58,17 +58,12 @@ services:
         sync: false
       - key: SEC_USER_AGENT
         sync: false
-      - key: ALPACA_API_KEY_ID
-        sync: false
-      - key: ALPACA_API_SECRET_KEY
-        sync: false
-      - key: ALPACA_FEED
-        value: iex
-      # ── Fundamentals explorer (Financial Modeling Prep) ──
+      # ── Financial Modeling Prep: fundamentals + market data (quotes, bars,
+      #    price reactions). Also starts the price-reaction worker. ──
       - key: FMP_API_KEY
         sync: false
       - key: FMP_CALLS_PER_MINUTE
-        value: "600"   # Ultimate plan allows 3,000; the cron shares the same key
+        value: "600"   # per client: prices and the on-demand backfill each get 600; plus the cron's 1,500 stays under Ultimate's 3,000
       - key: FUNDAMENTALS_ON_DEMAND
         value: "true"  # first visit to an unsynced ticker backfills it in-process
 
@@ -116,12 +111,6 @@ services:
         generateValue: true
       - key: SEC_USER_AGENT
         sync: false
-      - key: ALPACA_API_KEY_ID
-        sync: false
-      - key: ALPACA_API_SECRET_KEY
-        sync: false
-      - key: ALPACA_FEED
-        value: iex
       - key: FMP_API_KEY
         sync: false
       - key: FMP_CALLS_PER_MINUTE

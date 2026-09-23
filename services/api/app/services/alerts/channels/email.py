@@ -10,14 +10,14 @@ log = logging.getLogger(__name__)
 def _event_price(event):
     """Best-effort last trade price for the event's ticker, for display
     next to the ticker in the alert. Mirrors the companies.py quote proxy
-    (same Redis cache key, same Alpaca-then-last_price fallback) so this
-    never issues an extra Alpaca call beyond what the feed already pays for.
+    (same Redis cache key, same FMP-then-last_price fallback) so this
+    never issues an extra FMP call beyond what the feed already pays for.
     """
     if not event.ticker:
         return None
 
     from app.routes.companies import QUOTE_CACHE_SECONDS, _quote_payload
-    from app.services.market_data import alpaca
+    from app.services.market_data import prices
     from app.services.market_data.cache import cache_get, cache_set
 
     cache_key = f'quote:{event.ticker}'
@@ -29,13 +29,13 @@ def _event_price(event):
     if company is None:
         return None
 
-    symbol = alpaca.normalize_ticker(event.ticker)
+    symbol = prices.normalize_ticker(event.ticker)
     try:
-        snapshot = alpaca.get_snapshots([symbol]).get(symbol)
-    except alpaca.AlpacaError:
-        snapshot = None
+        fmp_quote = prices.get_quotes([symbol]).get(symbol)
+    except prices.MarketDataError:
+        fmp_quote = None
 
-    quote = _quote_payload(company, snapshot)
+    quote = _quote_payload(company, fmp_quote)
     if quote is None:
         return None
     if not quote['stale']:

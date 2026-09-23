@@ -18,7 +18,7 @@ class Company(BaseModel):
     # Legacy column; frontend now uses Logo.dev URLs derived from ticker
     logo_url: so.Mapped[Optional[str]] = so.mapped_column(sa.Text, nullable=True)
 
-    # Market data (EDGAR shares outstanding × Alpaca last price, daily sync)
+    # Market data (EDGAR shares outstanding × FMP last price, daily sync)
     shares_outstanding: so.Mapped[Optional[int]] = so.mapped_column(sa.BigInteger, nullable=True)
     shares_as_of: so.Mapped[Optional[date]] = so.mapped_column(sa.Date, nullable=True)
     last_price: so.Mapped[Optional[Decimal]] = so.mapped_column(sa.Numeric(14, 4), nullable=True)

@@ -4,7 +4,7 @@ Price-reaction worker.
 
 Drains the price_reaction table (the durable work queue written by the
 Redis subscriber): every 60s it claims rows whose measure_at has passed,
-measures the price move since the filing via Alpaca bars, flags explosive
+measures the price move since the filing via FMP bars, flags explosive
 moves (|move| >= 2 x ATR14), and pushes updates to connected clients as
 `price_reaction` socket events.
 
@@ -16,6 +16,10 @@ Measurement semantics (after-hours friendly):
               and measured_at records when that actually was
 - 1d / 1w   = close of the 1st / 5th daily bar after the filing date
 
+Whether an after-hours filing gets a same-evening "+5m" depends on the
+1-min feed carrying extended-hours bars; when it doesn't, the first print
+after measure_at is the next open, and measured_at says so.
+
 Runs as a daemon thread in the API process (same pattern as the Redis
 subscriber); pending rows survive restarts because state lives in Postgres.
 """
@@ -26,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from app.services.market_data import alpaca
+from app.services.market_data import prices
 from app.services.market_data.cache import cache_get, cache_set
 
 log = logging.getLogger(__name__)
@@ -36,8 +40,9 @@ CLAIM_LIMIT = 200
 MAX_ATTEMPTS = 5
 # Give up on a measurement this long after it came due with no prints at all
 STALE_AFTER = timedelta(days=4)
-# Politeness delay between Alpaca calls (free tier: 200 req/min)
-CALL_DELAY = 0.35
+# Politeness delay between calls; the FMP client's token bucket is the
+# real limit, this just spreads a burst of due rows across the tick.
+CALL_DELAY = 0.05
 
 ATR_CACHE_TTL = 24 * 3600
 
@@ -55,9 +60,7 @@ def _parse_bar_time(t: str) -> datetime:
 
 def _throttled_bars(symbol: str, timeframe: str, start: datetime, end: datetime | None):
     time.sleep(CALL_DELAY)
-    end_iso = end.isoformat() if end else None
-    bars = alpaca.get_bars([symbol], timeframe, start.isoformat(), end=end_iso)
-    return bars.get(symbol) or []
+    return prices.get_bars(symbol, timeframe, start, end)
 
 
 def _resolve_atr(company, symbol: str, daily_bars: list[dict], now: datetime):
@@ -70,7 +73,7 @@ def _resolve_atr(company, symbol: str, daily_bars: list[dict], now: datetime):
         if updated and now - updated < timedelta(seconds=ATR_CACHE_TTL):
             return float(company.atr_14)
 
-    atr = alpaca.compute_atr14(daily_bars)
+    atr = prices.compute_atr14(daily_bars)
     if atr is None:
         return None
     if company is not None:
@@ -113,12 +116,12 @@ def _process_event_rows(db, event, rows, company, now):
     """Measure all due rows for one event. Returns True if any row completed."""
     from app.models.price_reaction import STATUS_SKIPPED
 
-    symbol = alpaca.normalize_ticker(event.ticker)
+    symbol = prices.normalize_ticker(event.ticker)
     t0 = _aware(event.filing_date)
 
     # One daily-bars window serves ATR (bars before t0) and 1d/1w
     # measurements (bars after t0's date).
-    daily_bars = _throttled_bars(symbol, "1Day", t0 - timedelta(days=60), None)
+    daily_bars = _throttled_bars(symbol, prices.DAILY, t0 - timedelta(days=60), None)
     pre_t0 = [b for b in daily_bars if _parse_bar_time(b["t"]).date() <= t0.date()]
     post_t0 = [b for b in daily_bars if _parse_bar_time(b["t"]).date() > t0.date()]
 
@@ -131,7 +134,7 @@ def _process_event_rows(db, event, rows, company, now):
             max(_aware(r.measure_at) for r in intraday_rows) + timedelta(hours=24),
             now,
         )
-        minute_bars = _throttled_bars(symbol, "1Min", t0 - timedelta(hours=4), window_end)
+        minute_bars = _throttled_bars(symbol, "1min", t0 - timedelta(hours=4), window_end)
 
     # Baseline: last 1-min close at/before t0, else last daily close before t0
     baseline = baseline_at = None
@@ -241,7 +244,7 @@ def tick(app, socketio) -> int:
                 if _process_event_rows(db, event, event_rows, company, now):
                     done_count += sum(1 for r in event_rows if r.status == "done")
                     _emit_reactions(socketio, event)
-            except alpaca.AlpacaError as exc:
+            except prices.MarketDataError as exc:
                 db.session.rollback()
                 for row in event_rows:
                     row.attempts += 1
@@ -249,7 +252,7 @@ def tick(app, socketio) -> int:
                         row.status = STATUS_FAILED
                         row.error = str(exc)[:200]
                 db.session.commit()
-                log.warning("Alpaca error for %s: %s", event.ticker, exc)
+                log.warning("Market data error for %s: %s", event.ticker, exc)
             except Exception:
                 db.session.rollback()
                 log.exception("Reaction worker failed on event %s", event_id)

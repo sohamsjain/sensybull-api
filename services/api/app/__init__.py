@@ -214,8 +214,8 @@ def create_app(config_class=Config):
         from app.services.realtime.subscriber import start_subscriber
         start_subscriber(app, socketio)
 
-    # Start the price-reaction worker (skip when Alpaca isn't configured)
-    if os.environ.get("REDIS_URL") and os.environ.get("ALPACA_API_KEY_ID"):
+    # Start the price-reaction worker (skip when FMP isn't configured)
+    if os.environ.get("REDIS_URL") and os.environ.get("FMP_API_KEY"):
         from app.services.market_data.reaction_worker import start_reaction_worker
         start_reaction_worker(app, socketio)
 

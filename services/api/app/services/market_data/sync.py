@@ -1,6 +1,6 @@
 # services/api/app/services/market_data/sync.py
 """
-Daily market-data sync: Alpaca last price + EDGAR shares outstanding
+Daily market-data sync: FMP last price + EDGAR shares outstanding
 → Company.market_cap. Run via `flask sync-market-data` (cron), after
 sync-companies so newly listed companies are present.
 
@@ -20,7 +20,7 @@ from decimal import Decimal
 from app import db
 from app.models.company import Company
 from app.models.filing_event import FilingEvent
-from app.services.market_data import alpaca, edgar_facts
+from app.services.market_data import edgar_facts, prices
 
 log = logging.getLogger(__name__)
 
@@ -35,30 +35,21 @@ def _fallback_limit() -> int:
         return 2500
 
 
-def _snapshot_price(snap: dict):
-    """Best available last price from an Alpaca snapshot.
-
-    Shared with the /companies/<id>/quote route — see alpaca.snapshot_price.
-    """
-    return alpaca.snapshot_price(snap)
-
-
 def _sync_prices() -> int:
-    """Alpaca snapshots → last_price. Returns update count."""
+    """FMP batch quotes → last_price. Returns update count."""
     companies = Company.query.filter(Company.ticker.isnot(None)).all()
-    by_symbol = {alpaca.normalize_ticker(c.ticker): c for c in companies}
+    by_symbol = {prices.normalize_ticker(c.ticker): c for c in companies}
 
     try:
-        snapshots = alpaca.get_snapshots(list(by_symbol.keys()))
-    except alpaca.AlpacaError:
-        log.exception("Alpaca snapshot fetch failed — prices not updated")
+        quotes = prices.get_quotes(list(by_symbol.keys()), skip_failed_batches=True)
+    except prices.MarketDataError:
+        log.exception("FMP quote fetch failed — prices not updated")
         return 0
 
     now = datetime.now(timezone.utc)
     updated = 0
     for i, (symbol, company) in enumerate(by_symbol.items()):
-        snap = snapshots.get(symbol)
-        price = _snapshot_price(snap) if snap else None
+        price = prices.quote_price(quotes.get(symbol))
         if price is None:
             continue
         company.last_price = Decimal(str(price))

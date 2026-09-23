@@ -49,9 +49,9 @@ real company page — RELIANCE or TCS — and tell me what I have wrong or misse
 | Already exists | Where | Reuse |
 | --- | --- | --- |
 | `Company` table: ticker, CIK, SIC, shares outstanding, last price, market cap, ATR | `services/api/app/models/company.py` | The anchor row. Fundamentals hang off `company_id`. `market_cap`/`last_price` stay the price source of truth. |
-| Daily cron: `sync-companies` + `sync-market-data` (EDGAR shares × Alpaca price) | `Dockerfile.cron`, `render.yaml` | Add `sync-fundamentals` to the same cron chain, or a second cron (see 5.3). |
+| Daily cron: `sync-companies` + `sync-market-data` (EDGAR shares × FMP price — Alpaca until Sept 2026) | `Dockerfile.cron`, `render.yaml` | Add `sync-fundamentals` to the same cron chain, or a second cron (see 5.3). |
 | Redis JSON cache helpers that no-op without Redis | `services/market_data/cache.py` | Response cache for the new endpoints. |
-| Alpaca bars/quote proxies, snapshot price selection | `routes/companies.py`, `market_data/alpaca.py` | Price chart ≤ 5Y, live price in the header. |
+| FMP bars/quote proxies (were Alpaca until Sept 2026) | `routes/companies.py`, `market_data/prices.py` | Price chart ≤ 5Y, live price in the header. |
 | EDGAR `companyfacts`/`frames` client with SEC rate limiting | `market_data/edgar_facts.py` | Later: XBRL cross-check of FMP numbers; EDGAR `submissions` for the Documents section. |
 | SIC → sector mapping | `utils/sectors.py` | Fallback when FMP has no industry. |
 | Public SSR page pattern with `generateMetadata` + `fetch(..., { next: { revalidate } })` | web `src/app/add/[symbol]/page.tsx` | The company page is built the same way. |
@@ -249,7 +249,7 @@ FMP /stable ──► fundamentals/fmp_client.py ──► fundamentals/mapper.p
                 (rate-limited, retried,        (FMP fields → canonical            + fundamentals_segment
                  raw JSON retained)             columns, reconciliation)
                                                        │
-Company.last_price / bars (Alpaca, existing) ──────────┼──► fundamentals/derive.py ──► company_fundamentals (snapshot)
+Company.last_price / bars (FMP, existing)    ──────────┼──► fundamentals/derive.py ──► company_fundamentals (snapshot)
                                                        │     (TTM, CAGRs, ROE/ROCE, header ratios, pros/cons)
 EDGAR submissions (free) ──────────────────────────────┘
                                                        ▼
@@ -258,8 +258,9 @@ EDGAR submissions (free) ──────────────────�
                        sensybull-web  /company/[symbol]  (server component, ISR, client islands)
 ```
 
-Prices stay on Alpaca (existing). Only long-range chart windows (>5Y, "Max")
-use FMP's monthly history, on demand, cached a day.
+Prices come from FMP too since Sept 2026 (`market_data/prices.py`, which
+replaced the Alpaca client). Long-range chart windows (>5Y, "Max") use FMP's
+monthly history, on demand, cached a day.
 
 ### 3.3 Storage (Postgres, `services/api/migrations/`)
 
@@ -342,7 +343,7 @@ Budget: full head backfill ≈ 3,000 × 10 calls = 30k calls, a few hours at
 | `GET /api/v1/fundamentals/<symbol>` | profile + header ratios + analysis + **all** annual periods + last 40 quarters + segments + growth grids + ratios rows. One payload, ~20 KB gzipped, so the page is one fetch. | Redis 1 h; `Cache-Control: public, s-maxage=3600, stale-while-revalidate=86400` |
 | `GET /api/v1/fundamentals/<symbol>/peers` | up to 10 same-industry companies by market cap with the peer columns + industry median | Redis 1 h |
 | `GET /api/v1/fundamentals/<symbol>/documents` | 10-K / 10-Q / DEF 14A / 8-K list from EDGAR `submissions`, plus our own event ids | Redis 6 h |
-| `GET /api/v1/fundamentals/<symbol>/chart?range=10Y` | monthly closes beyond Alpaca's reach + PE-ratio and EPS-TTM series aligned to dates (Phase 2) | Redis 24 h |
+| `GET /api/v1/fundamentals/<symbol>/chart?range=10Y` | monthly closes beyond the bars route's 5Y window + PE-ratio and EPS-TTM series aligned to dates (Phase 2) | Redis 24 h |
 | `GET /api/v1/fundamentals/<symbol>/ownership` | Phase 3 | Redis 24 h |
 | `GET /api/v1/industries/<slug>` | companies in an industry with peer columns (Phase 3) | Redis 1 h |
 | `GET /api/v1/companies/search` | existing; extended with `industry`, `market_cap`, `has_fundamentals` and ranked by market cap | — |
@@ -436,7 +437,7 @@ expect it.
 ### Phase 2 — Charts — ~1 week
 
 Row charts on every row of every table. Chart section: price line with
-1M…Max ranges (Alpaca ≤5Y, FMP monthly beyond), Volume / DMA50 / DMA200
+1M…Max ranges (daily bars ≤5Y, FMP monthly beyond), Volume / DMA50 / DMA200
 overlays, PE-ratio tab with EPS overlay, Sales & Margin tab (quarterly
 Sales bars + OPM % line), EPS tab. Chart marks stay the existing
 "moved the stock" filter (`chart-signals.ts`), not every filing.
@@ -559,4 +560,4 @@ or peers (Phase 3) next? My guess is peers — it is the part readers can't get
 from a brokerage app.
 
 Nothing else is needed: both repos are already attached, and the existing
-Alpaca and SEC credentials cover prices and documents.
+FMP and SEC credentials cover prices and documents.
