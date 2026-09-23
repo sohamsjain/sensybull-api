@@ -80,3 +80,13 @@ def register_cli(app):
         from app.services.market_data.reaction_worker import backfill_reactions
         created, events = backfill_reactions(days=days)
         click.echo(f'Backfilled {created} reaction rows across {events} events')
+
+    @app.cli.command('reset-reactions')
+    @click.option('--days', default=30, show_default=True,
+                  help='Re-measure intraday reactions for events filed in the last N days.')
+    @with_appcontext
+    def reset_reactions_cmd(days):
+        """Re-queue 5m-1h / at-open reactions so the worker re-measures them."""
+        from app.services.market_data.reaction_worker import reset_intraday_reactions
+        n = reset_intraday_reactions(days=days)
+        click.echo(f'Reset {n} intraday reaction rows; the worker re-measures them within a few minutes')

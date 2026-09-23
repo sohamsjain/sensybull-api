@@ -3,6 +3,9 @@
 PriceReaction — scheduled price measurement for a filing event.
 
 Six rows per tickered FilingEvent (5m/15m/30m/1h/1d/1w after filing_date).
+A filing made outside regular trading hours has no 5-minute reaction to
+measure — the next print is the next open — so the reaction worker turns
+its 5m row into an "open" row (due just after the bell) and skips 15m-1h.
 Rows double as a durable work queue: the reaction worker polls for
 status="pending" AND measure_at <= now, so pending measurements survive
 process restarts. The (filing_event_id, interval) unique constraint makes
@@ -24,6 +27,13 @@ INTERVALS: dict[str, int] = {
     "1d": 86400,
     "1w": 7 * 86400,
 }
+
+# Intraday intervals measured only for filings made during the session
+INTRADAY_INTERVALS = ("5m", "15m", "30m", "1h")
+# Off-hours filings: one intraday reaction, the next session's opening print
+OPEN_INTERVAL = "open"
+# Display order of every interval an event can carry
+INTERVAL_ORDER = ("5m", "15m", "30m", "1h", OPEN_INTERVAL, "1d", "1w")
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"

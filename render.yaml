@@ -21,6 +21,16 @@ services:
     dockerfilePath: ./services/api/Dockerfile
     dockerContext: ./services/api
     healthCheckPath: /health
+    # Two homes for this service's env vars, no key in both:
+    # - here: wiring to other blueprint resources and non-secret tuning,
+    #   so it is version-controlled and a sync can't drift from it;
+    # - the "sensybull-api" env group (Render dashboard): secrets and
+    #   per-deployment app config — SECRET_KEY, JWT_SECRET_KEY, FMP_API_KEY,
+    #   SENTRY_DSN, RESEND_API_KEY, GOOGLE_*, APPLE_CLIENT_ID, VAPID_*,
+    #   TELEGRAM_*, SEC_USER_AGENT, CORS_ALLOWED_ORIGINS, FRONTEND_URL,
+    #   SHARE_BASE_URL, MAIL_*, SUPPORT_EMAIL.
+    # A key set on the service overrides the group, so a duplicate here
+    # silently shadows the group's value.
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -31,37 +41,18 @@ services:
           name: sensybull-redis
           type: redis
           property: connectionString
-      - key: SECRET_KEY
-        generateValue: true
-      - key: JWT_SECRET_KEY
-        generateValue: true
-      - key: FRONTEND_URL
-        sync: false  # set manually after frontend is deployed
-      - key: CORS_ALLOWED_ORIGINS
-        sync: false
-      - key: SENTRY_DSN
-        sync: false
+      - key: RATELIMIT_STORAGE_URI
+        fromService:
+          name: sensybull-redis
+          type: redis
+          property: connectionString
       - key: SENTRY_ENVIRONMENT
         value: production
       - key: LOG_FORMAT
         value: json
       - key: LOG_LEVEL
         value: INFO
-      - key: RATELIMIT_STORAGE_URI
-        fromService:
-          name: sensybull-redis
-          type: redis
-          property: connectionString
-      - key: RESEND_API_KEY
-        sync: false
-      - key: MAIL_FROM_ADDRESS
-        sync: false
-      - key: SEC_USER_AGENT
-        sync: false
-      # ── Financial Modeling Prep: fundamentals + market data (quotes, bars,
-      #    price reactions). Also starts the price-reaction worker. ──
-      - key: FMP_API_KEY
-        sync: false
+      # FMP (fundamentals + market data); the key itself is in the group.
       - key: FMP_CALLS_PER_MINUTE
         value: "600"   # per client: prices and the on-demand backfill each get 600; plus the cron's 1,500 stays under Ultimate's 3,000
       - key: FUNDAMENTALS_ON_DEMAND
