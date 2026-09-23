@@ -175,8 +175,18 @@ class FilingEvent(BaseModel):
                 }
                 for r in self.price_reactions if r.status == "done"
             },
+            # The intervals this event will get, in display order: an
+            # off-hours filing has "open" instead of 5m-1h, and a filing late
+            # in the session loses the ones that land after the close
+            "price_reaction_intervals": self.price_reaction_intervals(),
             "explosive": any(r.is_explosive for r in self.price_reactions),
         }
+
+    def price_reaction_intervals(self) -> list[str]:
+        from app.models.price_reaction import INTERVAL_ORDER, STATUS_FAILED, STATUS_SKIPPED
+        live = {r.interval for r in self.price_reactions
+                if r.status not in (STATUS_SKIPPED, STATUS_FAILED)}
+        return [i for i in INTERVAL_ORDER if i in live]
 
     def __repr__(self):
         return f"<FilingEvent ticker={self.ticker} tier={self.max_tier} id={self.id}>"

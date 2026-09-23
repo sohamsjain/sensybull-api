@@ -8,17 +8,20 @@ measures the price move since the filing via FMP bars, flags explosive
 moves (|move| >= 2 x ATR14), and pushes updates to connected clients as
 `price_reaction` socket events.
 
-Measurement semantics (after-hours friendly):
+Measurement semantics. FMP's 1-min bars cover the regular session only
+(09:30-16:00 ET), so a filing's session decides what can be measured:
 - baseline  = close of the last 1-min bar at/before filing_date
-              (fallback: last daily close before the filing date)
-- 5m..1h    = close of the first 1-min bar at/after measure_at — an
-              after-hours filing's "+5m" resolves to the next print,
-              and measured_at records when that actually was
-- 1d / 1w   = close of the 1st / 5th daily bar after the filing date
-
-Whether an after-hours filing gets a same-evening "+5m" depends on the
-1-min feed carrying extended-hours bars; when it doesn't, the first print
-after measure_at is the next open, and measured_at says so.
+              (fallback: the last daily close before it)
+- filed during the session:
+    5m..1h  = close of the first 1-min bar at/after measure_at; an interval
+              that lands after that session's close is skipped
+              ("after_close") rather than read off the next morning
+- filed outside it (evening, pre-market, weekend, holiday):
+    open    = the next session's opening print. The four intraday rows
+              would all resolve to that same bar, so the 5m row becomes
+              "open" and 15m-1h are skipped ("off_hours")
+- 1d / 1w   = close of the 1st / 5th daily bar after the filing's
+              (Eastern) date
 
 Runs as a daemon thread in the API process (same pattern as the Redis
 subscriber); pending rows survive restarts because state lives in Postgres.
@@ -27,9 +30,12 @@ subscriber); pending rows survive restarts because state lives in Postgres.
 import logging
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from decimal import Decimal
 
+from app.models.price_reaction import (
+    INTERVALS, INTRADAY_INTERVALS, OPEN_INTERVAL, STATUS_PENDING, STATUS_SKIPPED,
+)
 from app.services.market_data import prices
 from app.services.market_data.cache import cache_get, cache_set
 
@@ -45,6 +51,14 @@ STALE_AFTER = timedelta(days=4)
 CALL_DELAY = 0.05
 
 ATR_CACHE_TTL = 24 * 3600
+
+SESSION_OPEN = dtime(9, 30)
+SESSION_CLOSE = dtime(16, 0)
+# Measure the open a few minutes after the bell, once its bar has landed
+OPEN_SETTLE = timedelta(minutes=5)
+# How far back to look for the last print before an off-hours filing:
+# far enough to cross a long weekend
+OFF_HOURS_LOOKBACK = timedelta(days=4)
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -92,6 +106,58 @@ def _measure_intraday(minute_bars: list[dict], measure_at: datetime):
     return None
 
 
+def _eastern(dt: datetime) -> datetime:
+    return dt.astimezone(prices.EASTERN)
+
+
+def _in_regular_hours(t: datetime) -> bool:
+    """Weekday 09:30-16:00 ET by the clock (holidays are caught from the bars)."""
+    e = _eastern(t)
+    return e.weekday() < 5 and SESSION_OPEN <= e.time() < SESSION_CLOSE
+
+
+def _next_open(t: datetime) -> datetime:
+    """09:30 ET of the next weekday session starting after t.
+
+    Holidays aren't known here; an "open" row due on one simply waits for
+    the next session's bars.
+    """
+    e = _eastern(t)
+    day = e.date()
+    if e.weekday() >= 5 or e.time() >= SESSION_OPEN:
+        day += timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return datetime.combine(day, SESSION_OPEN, tzinfo=prices.EASTERN)
+
+
+def _defer_to_open(event, open_at: datetime) -> None:
+    """Off-hours filing: keep one intraday reaction, the next open.
+
+    Works on every pending row of the event, not just the claimed ones, so
+    15m-1h are settled before they come due.
+    """
+    has_open = any(r.interval == OPEN_INTERVAL for r in event.price_reactions)
+    for row in event.price_reactions:
+        if row.status != STATUS_PENDING:
+            continue
+        if row.interval == "5m" and not has_open:
+            row.interval = OPEN_INTERVAL
+            row.measure_at = open_at + OPEN_SETTLE
+        elif row.interval in INTRADAY_INTERVALS:
+            row.status = STATUS_SKIPPED
+            row.error = "off_hours"
+
+
+def _measure_open(minute_bars: list[dict], open_at: datetime):
+    """Opening print of the first session at/after open_at → (price, bar time)."""
+    for bar in minute_bars:
+        bar_time = _parse_bar_time(bar["t"])
+        if bar_time >= open_at:
+            return bar["o"], bar_time
+    return None
+
+
 def _measure_daily(daily_bars_after: list[dict], interval: str):
     """1st (1d) / 5th (1w) daily bar after the filing date → (price, bar time)."""
     index = 0 if interval == "1d" else 4
@@ -114,29 +180,60 @@ def _finish_row(row, price, measured_at, baseline, atr):
 
 def _process_event_rows(db, event, rows, company, now):
     """Measure all due rows for one event. Returns True if any row completed."""
-    from app.models.price_reaction import STATUS_SKIPPED
-
     symbol = prices.normalize_ticker(event.ticker)
     t0 = _aware(event.filing_date)
+    t0_day = _eastern(t0).date()
+    in_hours = _in_regular_hours(t0)
+
+    def still_due(rs):
+        return [r for r in rs if r.status == STATUS_PENDING and _aware(r.measure_at) <= now]
+
+    if not in_hours and any(r.interval in INTRADAY_INTERVALS for r in rows):
+        _defer_to_open(event, _next_open(t0))
+    elif in_hours:
+        # Filed during the session: an interval that lands after the close
+        # would read the next morning's print under a "+1h" label
+        close_at = datetime.combine(t0_day, SESSION_CLOSE, tzinfo=prices.EASTERN)
+        for row in rows:
+            if row.interval in INTRADAY_INTERVALS and _aware(row.measure_at) >= close_at:
+                row.status = STATUS_SKIPPED
+                row.error = "after_close"
+    rows = still_due(rows)
+    if not rows:
+        db.session.commit()
+        return False
 
     # One daily-bars window serves ATR (bars before t0) and 1d/1w
-    # measurements (bars after t0's date).
+    # measurements (bars after t0's Eastern date).
     daily_bars = _throttled_bars(symbol, prices.DAILY, t0 - timedelta(days=60), None)
-    pre_t0 = [b for b in daily_bars if _parse_bar_time(b["t"]).date() <= t0.date()]
-    post_t0 = [b for b in daily_bars if _parse_bar_time(b["t"]).date() > t0.date()]
+    pre_t0 = [b for b in daily_bars if _eastern(_parse_bar_time(b["t"])).date() <= t0_day]
+    post_t0 = [b for b in daily_bars if _eastern(_parse_bar_time(b["t"])).date() > t0_day]
 
     atr = _resolve_atr(company, symbol, pre_t0, now)
 
-    intraday_rows = [r for r in rows if r.interval in ("5m", "15m", "30m", "1h")]
+    minute_rows = [r for r in rows if r.interval in INTRADAY_INTERVALS or r.interval == OPEN_INTERVAL]
     minute_bars = []
-    if intraday_rows:
+    if minute_rows:
         window_end = min(
-            max(_aware(r.measure_at) for r in intraday_rows) + timedelta(hours=24),
+            max(_aware(r.measure_at) for r in minute_rows) + timedelta(hours=24),
             now,
         )
-        minute_bars = _throttled_bars(symbol, "1min", t0 - timedelta(hours=4), window_end)
+        lookback = timedelta(hours=4) if in_hours else OFF_HOURS_LOOKBACK
+        minute_bars = _throttled_bars(symbol, "1min", t0 - lookback, window_end)
 
-    # Baseline: last 1-min close at/before t0, else last daily close before t0
+    # Weekday hours on a market holiday: no session that day, but a later
+    # one has printed. Same treatment as any other off-hours filing.
+    if in_hours and any(r.interval in INTRADAY_INTERVALS for r in rows):
+        days = {_eastern(_parse_bar_time(b["t"])).date() for b in minute_bars}
+        later = sorted(d for d in days if d > t0_day)
+        if t0_day not in days and later:
+            in_hours = False
+            _defer_to_open(event, datetime.combine(later[0], SESSION_OPEN,
+                                                   tzinfo=prices.EASTERN))
+            rows = still_due(rows)
+
+    # Baseline: last 1-min close at/before t0, else the last daily close
+    # before it (today's too, when filed after the close)
     baseline = baseline_at = None
     for bar in minute_bars:
         bar_time = _parse_bar_time(bar["t"])
@@ -145,7 +242,10 @@ def _process_event_rows(db, event, rows, company, now):
         else:
             break
     if baseline is None and pre_t0:
-        prev = [b for b in pre_t0 if _parse_bar_time(b["t"]).date() < t0.date()]
+        closed_by_t0 = _eastern(t0).time() >= SESSION_CLOSE
+        prev = [b for b in pre_t0
+                if _eastern(_parse_bar_time(b["t"])).date() < t0_day
+                or (closed_by_t0 and _eastern(_parse_bar_time(b["t"])).date() == t0_day)]
         if prev:
             baseline, baseline_at = prev[-1]["c"], _parse_bar_time(prev[-1]["t"])
 
@@ -173,14 +273,22 @@ def _process_event_rows(db, event, rows, company, now):
             if result is None and overdue > STALE_AFTER and post_t0:
                 bar = post_t0[-1]
                 result = bar["c"], _parse_bar_time(bar["t"])
+        elif row.interval == OPEN_INTERVAL:
+            result = _measure_open(minute_bars, measure_at - OPEN_SETTLE)
         else:
             result = _measure_intraday(minute_bars, measure_at)
+            # Early-close days end before 16:00: the first print after
+            # measure_at is the next session's, so the same rule applies
+            if result is not None and _eastern(result[1]).date() != t0_day:
+                row.status = STATUS_SKIPPED
+                row.error = "after_close"
+                continue
 
         if result is None:
             if overdue > STALE_AFTER:
                 row.status = STATUS_SKIPPED
                 row.error = "no_prints"
-            # else: leave pending — prints may still arrive (AH gap, next open)
+            # else: leave pending — the bar may not have landed yet
             continue
 
         _finish_row(row, result[0], result[1], float(baseline), atr)
@@ -196,6 +304,7 @@ def _emit_reactions(socketio, event):
         "filing_event_id": event.id,
         "ticker": event.ticker,
         "price_reactions": payload["price_reactions"],
+        "price_reaction_intervals": payload["price_reaction_intervals"],
         "explosive": payload["explosive"],
     }
     socketio.emit("price_reaction", update, room="public", namespace="/feed")
@@ -264,7 +373,7 @@ def backfill_reactions(days: int = 7) -> tuple[int, int]:
     """Create missing PriceReaction rows for recent events (CLI helper)."""
     from app import db
     from app.models.filing_event import FilingEvent
-    from app.models.price_reaction import INTERVALS, PriceReaction
+    from app.models.price_reaction import PriceReaction
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     events = (
@@ -276,6 +385,8 @@ def backfill_reactions(days: int = 7) -> tuple[int, int]:
     created = touched = 0
     for event in events:
         existing = {r.interval for r in event.price_reactions}
+        if OPEN_INTERVAL in existing:  # an off-hours event's 5m became "open"
+            existing.add("5m")
         missing = [i for i in INTERVALS if i not in existing]
         if not missing:
             continue
@@ -290,6 +401,46 @@ def backfill_reactions(days: int = 7) -> tuple[int, int]:
         touched += 1
     db.session.commit()
     return created, touched
+
+
+def reset_intraday_reactions(days: int = 30) -> int:
+    """Re-queue recent events' intraday rows for measurement (CLI helper).
+
+    For rows measured under older rules (every after-hours filing's 5m-1h
+    read the same next-open print): puts 5m-1h and "open" back to pending
+    as scheduled, so the worker re-measures them under the current ones.
+    Returns the number of rows reset.
+    """
+    from app import db
+    from app.models.filing_event import FilingEvent
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    events = (
+        FilingEvent.query
+        .filter(FilingEvent.filing_date >= cutoff)
+        .filter(FilingEvent.ticker.isnot(None))
+        .all()
+    )
+    reset = 0
+    for event in events:
+        t0 = _aware(event.filing_date)
+        has_5m = any(r.interval == "5m" for r in event.price_reactions)
+        for row in event.price_reactions:
+            if row.interval == OPEN_INTERVAL and not has_5m:
+                row.interval = "5m"
+            elif row.interval not in INTRADAY_INTERVALS:
+                continue
+            row.measure_at = t0 + timedelta(seconds=INTERVALS[row.interval])
+            row.status = STATUS_PENDING
+            row.attempts = 0
+            row.error = None
+            row.baseline_price = row.baseline_at = None
+            row.measured_price = row.measured_at = None
+            row.pct_change = None
+            row.is_explosive = False
+            reset += 1
+    db.session.commit()
+    return reset
 
 
 def start_reaction_worker(app, socketio) -> threading.Thread | None:
