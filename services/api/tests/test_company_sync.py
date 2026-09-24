@@ -89,6 +89,27 @@ class TestSyncCompanies:
         assert aapl.listed is True
         assert aapl.name == "Apple Inc."
 
+    def test_takes_sector_industry_and_exchange_from_the_screener_row(self, db_session):
+        aapl = _company("AAPL", "0000320193")
+        aapl.market_cap = 3 * 10**12
+        sync_companies(FakeFMP([
+            _row("AAPL", sector="Technology", industry="Consumer Electronics"),
+            _row("NEWCO", sector="Health Care", industry="Biotechnology", exchange="NYSE"),
+        ], profiles={"NEWCO": {"cik": "1234567"}}))
+        assert (aapl.sector, aapl.industry, aapl.exchange) == ("Technology", "Consumer Electronics", "NASDAQ")
+        assert aapl.market_cap == 3 * 10**12  # sync-market-data owns an existing cap
+        newco = Company.query.filter_by(ticker="NEWCO").one()
+        assert newco.sector == "Healthcare"  # GICS spelling → FMP's
+        assert newco.market_cap == 10**9  # seeded so its events land in a bucket
+
+    def test_a_blank_or_unknown_sector_never_erases_one(self, db_session):
+        aapl = _company("AAPL", "0000320193")
+        aapl.sector = "Technology"
+        sync_companies(FakeFMP([_row("AAPL", sector="")]))
+        assert aapl.sector == "Technology"
+        sync_companies(FakeFMP([_row("AAPL", sector="Shell Companies")]))
+        assert aapl.sector == "Technology"
+
     def test_new_symbol_is_created_with_its_cik(self, db_session):
         fmp = FakeFMP([_row("NEWCO", "NewCo Holdings")], profiles={"NEWCO": {"cik": "1234567"}})
         stats = sync_companies(fmp)

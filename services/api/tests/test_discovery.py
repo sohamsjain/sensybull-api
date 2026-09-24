@@ -83,6 +83,8 @@ class TestOpenApiSpec:
         paths = client.get("/docs/openapi.json").get_json()["paths"]
         for path in (
             "/api/v1/events/all/{event_id}",
+            "/api/v1/events/filters",
+            "/api/v1/events/facets",
             "/api/v1/companies/search",
             "/api/v1/fundamentals/{symbol}",
             "/api/v1/fundamentals/{symbol}/documents",

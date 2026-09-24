@@ -4,6 +4,36 @@ OpenAPI 3.0 specification for the Sensybull API.
 Served as JSON at /docs/openapi.json and rendered via Swagger UI at /docs.
 """
 
+# The feed filters every event list accepts (app/services/feed_filters.py).
+_FEED_FILTER_PARAMS = [
+    {"name": "important", "in": "query", "schema": {"type": "boolean"},
+     "description": "Only market-moving events (the payload's `important` flag)"},
+    {"name": "sector", "in": "query", "schema": {"type": "string"},
+     "description": "Comma-separated FMP sectors, e.g. `Healthcare,Technology` (options: GET /events/filters)"},
+    {"name": "cap", "in": "query", "schema": {"type": "string"},
+     "description": "Comma-separated market-cap buckets: mega (≥$200B), large ($10–200B), mid ($2–10B), small ($300M–2B), micro (<$300M)"},
+    {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["sec", "pr"]},
+     "description": "SEC filings or newswire press releases"},
+    {"name": "sentiment", "in": "query", "schema": {"type": "string"},
+     "description": "Comma-separated: Positive, Negative, Mixed, Neutral"},
+    {"name": "moved", "in": "query", "schema": {"type": "string", "enum": ["any", "up", "down"]},
+     "description": "Only events whose measured price reaction was explosive (≥2× ATR), optionally by direction"},
+    {"name": "since", "in": "query", "schema": {"type": "string", "enum": ["1d", "7d", "30d", "90d"]},
+     "description": "Time window on the list's own order key"},
+    {"name": "q", "in": "query", "schema": {"type": "string", "maxLength": 100},
+     "description": "Matches ticker, company name or headline"},
+]
+
+_FEED_VIEW = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "name": {"type": "string", "maxLength": 60},
+        "filters": {"type": "object", "description": "Canonical filter dict — same keys as the feed query string, plus `scope` (all|mine)"},
+        "position": {"type": "integer"},
+    },
+}
+
 OPENAPI_SPEC = {
     "openapi": "3.0.3",
     "info": {
@@ -245,6 +275,9 @@ OPENAPI_SPEC = {
                     "ticker": {"type": "string", "nullable": True},
                     "company_name": {"type": "string"},
                     "company_id": {"type": "string", "format": "uuid", "nullable": True},
+                    "sector": {"type": "string", "nullable": True, "description": "FMP sector of the filer (see GET /events/filters)"},
+                    "industry": {"type": "string", "nullable": True},
+                    "market_cap": {"type": "integer", "nullable": True},
                     "cik": {"type": "string"},
                     "filing_date": {"type": "string", "format": "date-time", "nullable": True},
                     "edgar_url": {"type": "string", "format": "uri", "nullable": True},
@@ -307,7 +340,7 @@ OPENAPI_SPEC = {
             "EventType": {
                 "name": "event_type", "in": "query",
                 "schema": {"type": "string"},
-                "description": "Filter by canonical event type label (e.g. 'Acquisition')",
+                "description": "Comma-separated canonical event type labels (e.g. 'Acquisition,Earnings'); matches any",
             },
         },
     },
@@ -452,6 +485,7 @@ OPENAPI_SPEC = {
                     {"$ref": "#/components/parameters/MaxTier"},
                     {"$ref": "#/components/parameters/SignalType"},
                     {"$ref": "#/components/parameters/EventType"},
+                    *_FEED_FILTER_PARAMS,
                 ],
                 "responses": {
                     "200": {
@@ -481,6 +515,7 @@ OPENAPI_SPEC = {
                     {"$ref": "#/components/parameters/MaxTier"},
                     {"$ref": "#/components/parameters/SignalType"},
                     {"$ref": "#/components/parameters/EventType"},
+                    *_FEED_FILTER_PARAMS,
                 ],
                 "responses": {
                     "200": {
@@ -895,6 +930,86 @@ def _bulk(summary: str, extra_props: dict | None = None) -> dict:
 
 
 OPENAPI_SPEC["paths"].update({
+    "/api/v1/events/facets": {
+        "get": {
+            "tags": ["Events"],
+            "summary": "Feed filter counts",
+            "description": "How many events each filter option would return, each counted with every other active filter applied. `scope=all` is public and cached 60s; `scope=mine` needs a token.",
+            "parameters": [
+                {"name": "scope", "in": "query", "schema": {"type": "string", "enum": ["all", "mine"], "default": "all"}},
+                {"$ref": "#/components/parameters/EventType"},
+                *_FEED_FILTER_PARAMS,
+            ],
+            "responses": {
+                "200": {"description": "Counts", "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "properties": {
+                        "total": {"type": "integer"},
+                        "event_type": {"type": "object", "additionalProperties": {"type": "integer"}},
+                        "sector": {"type": "object", "additionalProperties": {"type": "integer"}},
+                        "cap": {"type": "object", "additionalProperties": {"type": "integer"}},
+                        "source": {"type": "object", "additionalProperties": {"type": "integer"}},
+                        "sentiment": {"type": "object", "additionalProperties": {"type": "integer"}},
+                        "important": {"type": "integer"},
+                        "moved": {"type": "object", "additionalProperties": {"type": "integer"}},
+                    },
+                }}}},
+                "400": {"description": "Unknown filter value"},
+                "401": {"description": "scope=mine without a token"},
+            },
+        },
+    },
+    "/api/v1/events/filters": {
+        "get": {
+            "tags": ["Events"],
+            "summary": "Feed filter options (public)",
+            "description": "Every value each feed filter accepts, with display labels and market-cap bucket bounds.",
+            "responses": {"200": {"description": "Options"}},
+        },
+    },
+    "/api/v1/feed/views": {
+        "get": {
+            "tags": ["Events"],
+            "summary": "List saved feed views",
+            "security": [{"BearerAuth": []}],
+            "responses": {"200": {"description": "Views", "content": {"application/json": {"schema": {
+                "type": "object", "properties": {"views": {"type": "array", "items": _FEED_VIEW}}}}}}},
+        },
+        "post": {
+            "tags": ["Events"],
+            "summary": "Save a feed view",
+            "security": [{"BearerAuth": []}],
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object", "required": ["name"],
+                "properties": {"name": {"type": "string"}, "filters": {"type": "object"}}}}}},
+            "responses": {
+                "201": {"description": "Created", "content": {"application/json": {"schema": {
+                    "type": "object", "properties": {"view": _FEED_VIEW}}}}},
+                "400": {"description": "Missing name or unknown filter value"},
+                "409": {"description": "Duplicate name, or the 20-view limit"},
+            },
+        },
+    },
+    "/api/v1/feed/views/{view_id}": {
+        "put": {
+            "tags": ["Events"],
+            "summary": "Rename, re-filter or reorder a saved view",
+            "security": [{"BearerAuth": []}],
+            "parameters": [{"name": "view_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "requestBody": {"content": {"application/json": {"schema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "filters": {"type": "object"}, "position": {"type": "integer"}}}}}},
+            "responses": {"200": {"description": "Updated"}, "400": {"description": "Bad value"},
+                          "404": {"description": "Not found"}, "409": {"description": "Duplicate name"}},
+        },
+        "delete": {
+            "tags": ["Events"],
+            "summary": "Delete a saved view",
+            "security": [{"BearerAuth": []}],
+            "parameters": [{"name": "view_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "Deleted — {deleted: view_id}"}, "404": {"description": "Not found"}},
+        },
+    },
     "/api/v1/events/all/{event_id}": {
         "get": {
             "tags": ["Events"],

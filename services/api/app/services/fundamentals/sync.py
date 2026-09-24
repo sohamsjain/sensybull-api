@@ -25,6 +25,7 @@ from app.models.fundamentals import (
 )
 from app.services.fundamentals import analysis, derive, mapper
 from app.services.fundamentals.fmp_client import FMPClient, FMPError, fmp_symbol
+from app.services.feed_filters import normalize_sector
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +46,15 @@ def _now():
 
 
 # ── One company ────────────────────────────────────────────────────────
+
+def _classify_company(company: Company, snap: CompanyFundamentals) -> None:
+    """Fill the company's feed-filter classification from its profile when
+    the daily universe sync hasn't (an OTC filer, a brand-new listing)."""
+    if company.sector is None:
+        company.sector = normalize_sector(snap.sector)
+    if company.industry is None and snap.industry:
+        company.industry = snap.industry
+
 
 def sync_company(company: Company, client: FMPClient | None = None, *, today: date | None = None) -> dict:
     """Fetch everything for one company and rebuild its snapshot.
@@ -69,6 +79,7 @@ def sync_company(company: Company, client: FMPClient | None = None, *, today: da
             snap.sync_error = None if profile else 'no_profile'
             for col, val in mapper.map_profile(profile).items():
                 setattr(snap, col, val)
+            _classify_company(company, snap)
             db.session.commit()
             return {'periods': 0, 'has_fundamentals': False, 'error': snap.sync_error}
 
@@ -91,6 +102,7 @@ def sync_company(company: Company, client: FMPClient | None = None, *, today: da
     try:
         for col, val in mapper.map_profile(profile).items():
             setattr(snap, col, val)
+        _classify_company(company, snap)
 
         count = _upsert_periods(company, annual + quarters)
 
