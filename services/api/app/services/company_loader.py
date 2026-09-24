@@ -41,6 +41,7 @@ from app import db
 from app.models.company import Company, CompanyTickerAlias
 from app.models.filing_event import FilingEvent
 from app.services.company_resolver import find_company_by_symbol
+from app.services.feed_filters import normalize_sector
 from app.services.fundamentals import fields as F
 from app.services.fundamentals.fmp_client import FMPClient, FMPError, fmp_symbol
 from app.utils.tickers import TICKER_RE
@@ -126,6 +127,28 @@ def fetch_universe(client: FMPClient) -> tuple[list[dict], bool]:
     return ordered, complete
 
 
+def _classify(company: Company, row: dict) -> None:
+    """Sector, industry, exchange (and a first market cap) from the
+    screener row we already have — the feed's sector and market-cap
+    filters read these, and they cost no extra FMP calls. A blank field
+    in the row never erases what we know."""
+    sector = normalize_sector(F.pick(row, F.PROFILE_FIELDS["sector"]))
+    if sector:
+        company.sector = sector
+    industry = (F.pick(row, F.PROFILE_FIELDS["industry"]) or "").strip()
+    if industry:
+        company.industry = industry[:120]
+    exchange = (row.get("exchangeShortName") or row.get("exchange") or "").strip().upper()
+    if exchange:
+        company.exchange = exchange[:16]
+    # sync-market-data owns market_cap; this only seeds a brand-new row so
+    # its events land in a cap bucket before the next market sync
+    if company.market_cap is None:
+        cap = F.to_int(F.pick(row, F.PROFILE_FIELDS["market_cap"]))
+        if cap and cap > 0:
+            company.market_cap = cap
+
+
 def _set_alias(ticker: str, company: Company, kind: str) -> None:
     alias = CompanyTickerAlias.query.filter_by(ticker=ticker).first()
     if alias is None:
@@ -184,6 +207,7 @@ def sync_companies(client: FMPClient | None = None) -> dict:
         if company is not None:
             company.listed = True
             company.name = name
+            _classify(company, row)
             stats["updated"] += 1
         elif symbol in class_aliases:
             continue
@@ -223,6 +247,7 @@ def sync_companies(client: FMPClient | None = None) -> dict:
                 if cik:
                     by_cik[cik] = company
                 stats["added"] += 1
+            _classify(company, row)
             by_ticker[symbol] = company
             db.session.flush()
         if (i + 1) % COMMIT_BATCH == 0:

@@ -166,6 +166,9 @@ class FilingEvent(BaseModel):
             ] if self.catalysts else [],
             "received_at": self._utc_iso(self.created_at),
             "market_cap": self.company.market_cap if self.company else None,
+            # Classification behind the feed's sector filter (FMP taxonomy)
+            "sector": self.company.sector if self.company else None,
+            "industry": self.company.industry if self.company else None,
             "price_reactions": {
                 r.interval: {
                     "pct": r.pct_change,

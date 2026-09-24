@@ -19,6 +19,12 @@ class Company(BaseModel):
     # sync-companies run), False once it drops out, NULL for rows the sync
     # hasn't judged yet (e.g. auto-created by the event subscriber).
     listed: so.Mapped[Optional[bool]] = so.mapped_column(sa.Boolean, nullable=True, index=True)
+    # FMP classification, from the daily sync-companies screener run (no
+    # extra calls). `sector` is always one of feed_filters.SECTORS or NULL —
+    # it backs the feed's sector filter, so a vendor spelling never leaks in.
+    sector: so.Mapped[Optional[str]] = so.mapped_column(sa.String(64), nullable=True, index=True)
+    industry: so.Mapped[Optional[str]] = so.mapped_column(sa.String(120), nullable=True)
+    exchange: so.Mapped[Optional[str]] = so.mapped_column(sa.String(16), nullable=True)
     # Legacy column; frontend now uses Logo.dev URLs derived from ticker
     logo_url: so.Mapped[Optional[str]] = so.mapped_column(sa.Text, nullable=True)
 

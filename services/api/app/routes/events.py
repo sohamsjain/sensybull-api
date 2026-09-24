@@ -3,19 +3,30 @@
 REST endpoints for filing event history.
 
 GET  /events/              paginated event feed for the user's watchlist companies
+GET  /events/all           paginated feed of every event (public)
+GET  /events/facets        how many events each filter option would show
+GET  /events/filters       every option each feed filter offers (public)
 GET  /events/<event_id>    single event detail
-GET  /events/company/<company_id>   events for one company (with optional tier filter)
+GET  /events/company/<company_id>   events for one company
+
+The feed endpoints share one set of filters, applied in SQL by
+app/services/feed_filters.py: important, event_type, sector, cap, source,
+sentiment, moved, since, q (plus the legacy max_tier and signal_type).
+Multi-value filters take a comma-separated list. An unknown value is a 400.
 """
 
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 from sqlalchemy.orm import joinedload
 
 from app.models.filing_event import FilingEvent
-from app.models.event_type import EventType
 from app.models.watchlist import Watchlist
+from app.services import feed_filters
+from app.services.feed_filters import FilterError, parse_filters
 
 events_bp = Blueprint("events", __name__)
+
+FACETS_CACHE_SECONDS = 60
 
 
 def _user_company_ids(user_id: str) -> set[str]:
@@ -23,46 +34,46 @@ def _user_company_ids(user_id: str) -> set[str]:
     return {c.id for wl in watchlists for c in wl.companies}
 
 
-def _apply_event_type_filter(q, event_type: str | None):
-    """Filter by event_type using the EventType relationship."""
-    if not event_type:
-        return q
-    return q.filter(FilingEvent.event_types.any(EventType.type_name == event_type))
+def _filters(scope: str):
+    """The request's filters, or a 400 response."""
+    try:
+        f = parse_filters(request.args)
+    except FilterError as exc:
+        return None, (jsonify({"error": str(exc)}), 400)
+    f.scope = scope
+    return f, None
 
 
-@events_bp.route("/", methods=["GET"])
-@jwt_required()
-def get_events():
-    user_id     = get_jwt_identity()
-    page        = request.args.get("page", 1, type=int)
-    per_page    = request.args.get("per_page", 50, type=int)
-    max_tier    = request.args.get("max_tier", 3, type=int)    # filter: only <= this tier
-    signal_type = request.args.get("signal_type")              # "8-K", "earnings", etc.
-    event_type  = request.args.get("event_type")               # e.g. "Acquisition"
-
-    company_ids = _user_company_ids(user_id)
-    if not company_ids:
-        return jsonify({"events": [], "total": 0, "page": page, "per_page": per_page})
-
-    q = (
-        FilingEvent.query
-        .options(joinedload(FilingEvent.company))
-        .filter(FilingEvent.company_id.in_(company_ids))
-        .filter(FilingEvent.max_tier <= max_tier)
-    )
-    if signal_type:
-        q = q.filter(FilingEvent.signal_type == signal_type)
-    q = _apply_event_type_filter(q, event_type)
-
-    pagination = q.order_by(FilingEvent.filing_date.desc()).paginate(
-        page=page, per_page=min(per_page, 200), error_out=False
+def _page(q, f, order):
+    page = max(request.args.get("page", 1, type=int), 1)
+    per_page = min(max(request.args.get("per_page", 50, type=int), 1), 200)
+    q = feed_filters.apply_filters(q, f)
+    pagination = q.order_by(order.desc(), FilingEvent.id.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
     )
     return jsonify({
         "events": [e.to_ws_payload() for e in pagination.items],
         "total": pagination.total,
         "page": page,
         "per_page": per_page,
+        "has_more": page * per_page < pagination.total,
+        "filters": f.to_dict(),
     })
+
+
+@events_bp.route("/", methods=["GET"])
+@jwt_required()
+def get_events():
+    f, error = _filters("mine")
+    if error:
+        return error
+    company_ids = _user_company_ids(get_jwt_identity())
+    q = (
+        FilingEvent.query
+        .options(joinedload(FilingEvent.company))
+        .filter(FilingEvent.company_id.in_(company_ids or {""}))
+    )
+    return _page(q, f, feed_filters.order_column("mine"))
 
 
 @events_bp.route("/all", methods=["GET"])
@@ -72,30 +83,53 @@ def get_all_events():
     Ordered by when we received each event (created_at), so the REST
     pages line up with the live socket stream the feed prepends onto.
     """
-    page        = request.args.get("page", 1, type=int)
-    per_page    = request.args.get("per_page", 50, type=int)
-    max_tier    = request.args.get("max_tier", 3, type=int)
-    signal_type = request.args.get("signal_type")
-    event_type  = request.args.get("event_type")
+    f, error = _filters("all")
+    if error:
+        return error
+    q = FilingEvent.query.options(joinedload(FilingEvent.company))
+    return _page(q, f, feed_filters.order_column("all"))
 
-    q = (
-        FilingEvent.query
-        .options(joinedload(FilingEvent.company))
-        .filter(FilingEvent.max_tier <= max_tier)
-    )
-    if signal_type:
-        q = q.filter(FilingEvent.signal_type == signal_type)
-    q = _apply_event_type_filter(q, event_type)
 
-    pagination = q.order_by(FilingEvent.created_at.desc()).paginate(
-        page=page, per_page=min(per_page, 200), error_out=False
-    )
-    return jsonify({
-        "events": [e.to_ws_payload() for e in pagination.items],
-        "total": pagination.total,
-        "page": page,
-        "per_page": per_page,
-    })
+@events_bp.route("/facets", methods=["GET"])
+def get_facets():
+    """Counts per filter option for the feed's filter panel.
+
+    `scope=all` (default) counts the public stream and is shared-cached;
+    `scope=mine` counts the caller's companies and needs a token. Each
+    option is counted with every *other* active filter applied, so the
+    panel shows what a click would actually return.
+    """
+    from app.services.market_data.cache import cache_get, cache_set
+
+    scope = request.args.get("scope", "all")
+    if scope not in feed_filters.SCOPES:
+        return jsonify({"error": f"unknown scope: {scope!r}"}), 400
+    f, error = _filters(scope)
+    if error:
+        return error
+
+    if scope == "mine":
+        verify_jwt_in_request()
+        company_ids = _user_company_ids(get_jwt_identity()) or {""}
+
+        def base():
+            return FilingEvent.query.filter(FilingEvent.company_id.in_(company_ids))
+
+        return jsonify(feed_filters.facet_counts(base, f))
+
+    cache_key = f"facets:v1:{f.cache_key()}"
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+    counts = feed_filters.facet_counts(lambda: FilingEvent.query, f)
+    cache_set(cache_key, counts, FACETS_CACHE_SECONDS)
+    return jsonify(counts)
+
+
+@events_bp.route("/filters", methods=["GET"])
+def get_filter_options():
+    """Every option each feed filter accepts, with display labels."""
+    return jsonify(feed_filters.options_payload(EVENT_TYPES))
 
 
 @events_bp.route("/all/<event_id>", methods=["GET"])
@@ -149,28 +183,12 @@ def get_company_events(company_id):
     if company_id not in company_ids:
         return jsonify({"error": "Access denied"}), 403
 
-    page        = request.args.get("page", 1, type=int)
-    per_page    = request.args.get("per_page", 50, type=int)
-    max_tier    = request.args.get("max_tier", 3, type=int)
-    signal_type = request.args.get("signal_type")
-    event_type  = request.args.get("event_type")
-
+    f, error = _filters("mine")
+    if error:
+        return error
     q = (
         FilingEvent.query
         .options(joinedload(FilingEvent.company))
         .filter_by(company_id=company_id)
-        .filter(FilingEvent.max_tier <= max_tier)
     )
-    if signal_type:
-        q = q.filter_by(signal_type=signal_type)
-    q = _apply_event_type_filter(q, event_type)
-
-    pagination = q.order_by(FilingEvent.filing_date.desc()).paginate(
-        page=page, per_page=min(per_page, 200), error_out=False
-    )
-    return jsonify({
-        "events": [e.to_ws_payload() for e in pagination.items],
-        "total": pagination.total,
-        "page": page,
-        "per_page": per_page,
-    })
+    return _page(q, f, FilingEvent.filing_date)

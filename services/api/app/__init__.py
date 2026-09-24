@@ -108,6 +108,7 @@ def create_app(config_class=Config):
     from app.routes.share import share_bp
     from app.routes.fundamentals import fundamentals_bp
     from app.routes.discovery import discovery_bp
+    from app.routes.feed_views import feed_views_bp
 
     # API v1 routes
     API_V1 = '/api/v1'
@@ -124,6 +125,7 @@ def create_app(config_class=Config):
     app.register_blueprint(watchlist_inbox_bp, url_prefix=f'{API_V1}/chats', name='chats_compat')
     app.register_blueprint(share_bp, url_prefix=f'{API_V1}/share')
     app.register_blueprint(discovery_bp, url_prefix=f'{API_V1}/discovery')
+    app.register_blueprint(feed_views_bp, url_prefix=f'{API_V1}/feed')
 
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)
