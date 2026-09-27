@@ -36,14 +36,24 @@ USER_AGENT = _user_agent
 # HTTP
 # ---------------------------------------------------------------------------
 
-def fetch_url(url: str, retries: int = 3, base_timeout: int = 45) -> bytes:
+# Upper bound on one filing document. An 8-K body or EX-99 is normally
+# well under 1 MB, but the odd one carries a whole offering circular or
+# annual report; reading those whole (then decoding and stripping them)
+# spikes the worker past its 512 MB instance. Nothing downstream reads past
+# the first ~1.5 MB of a document, so the tail is dropped at the socket.
+MAX_DOCUMENT_BYTES = 4_000_000
+
+
+def fetch_url(url: str, retries: int = 3, base_timeout: int = 45,
+              max_bytes: int | None = None) -> bytes:
+    """GET ``url``; with ``max_bytes`` the body is cut at that many bytes."""
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     last_exc: Exception = RuntimeError("no attempts made")
     for attempt in range(retries):
         timeout = base_timeout + attempt * 20  # 45 → 65 → 85 s
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.read()
+                return resp.read(max_bytes) if max_bytes else resp.read()
         except Exception as exc:
             last_exc = exc
             if attempt < retries - 1:
@@ -217,7 +227,7 @@ def fetch_filing_detail(index_url: str, form_type: str = "8-K") -> dict:
     if primary_url:
         time.sleep(0.1)  # SEC fair-access politeness
         try:
-            primary_html = fetch_url(primary_url).decode("utf-8", errors="replace")
+            primary_html = fetch_url(primary_url, max_bytes=MAX_DOCUMENT_BYTES).decode("utf-8", errors="replace")
         except Exception:
             pass
 
@@ -242,7 +252,7 @@ def fetch_exhibit_text(url: str) -> str:
         return ""
     try:
         time.sleep(0.1)  # SEC fair-access politeness
-        raw = fetch_url(url)
+        raw = fetch_url(url, max_bytes=MAX_DOCUMENT_BYTES)
         # Quick binary check — if no HTML markers in first 2KB, skip
         head = raw[:2048].decode("utf-8", errors="replace").lower()
         if "<html" not in head and "<body" not in head:

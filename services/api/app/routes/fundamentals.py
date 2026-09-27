@@ -39,6 +39,14 @@ RECENT_EVENTS = 10
 _building: set[str] = set()
 _building_lock = threading.Lock()
 
+# Each backfill holds a company's full FMP history (≈120 periods of raw
+# statements plus decades of daily prices) in this process while it maps
+# it. The API runs on a 512 MB instance, so a burst of first visits to
+# unsynced tickers (a crawler, a shared list) must not fan out into
+# unbounded concurrent backfills. Past the cap a request still answers
+# `building`; the page's next poll starts the backfill once a slot frees.
+MAX_CONCURRENT_BACKFILLS = 2
+
 
 def _cache_control(resp, seconds: int):
     resp.headers['Cache-Control'] = f'public, s-maxage={seconds}, max-age=60, stale-while-revalidate=86400'
@@ -71,6 +79,8 @@ def _start_backfill(company: Company) -> bool:
     key = company.id
     with _building_lock:
         if key in _building:
+            return True
+        if len(_building) >= MAX_CONCURRENT_BACKFILLS:
             return True
         _building.add(key)
     redis_key = f'fundamentals:building:{company.id}'

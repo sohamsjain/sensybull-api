@@ -508,6 +508,16 @@ class TestRoutes:
         assert resp.headers['Cache-Control'] == 'no-store'
         assert started['id'] == priced_company.id
 
+    def test_backfills_are_capped_per_process(self, app, db_session, priced_company):
+        from app.routes import fundamentals as F
+        with patch.object(F, '_building', {'busy-1', 'busy-2'}), \
+                patch.dict(os.environ, {'FMP_API_KEY': 'k'}), \
+                patch.object(F.threading, 'Thread') as thread, \
+                app.test_request_context():
+            assert F._start_backfill(priced_company) is True  # still "building"
+            assert not thread.called
+            assert priced_company.id not in F._building
+
     def test_unsynced_without_key_is_unavailable(self, client, db_session, priced_company):
         with patch.dict(os.environ, {'FMP_API_KEY': ''}):
             resp = client.get('/api/v1/fundamentals/AAPL')
