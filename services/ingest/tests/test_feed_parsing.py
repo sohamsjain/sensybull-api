@@ -39,3 +39,20 @@ class TestCleanTitle:
         assert _clean_title(
             "8-K/A - Tesla, Inc. (0001318605) (Filer)", "8-K/A",
         ) == "Tesla, Inc."
+
+
+def test_fetch_url_stops_reading_at_max_bytes(monkeypatch):
+    import io
+    import fetcher
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(fetcher.urllib.request, "urlopen",
+                        lambda req, timeout: _Resp(b"x" * 1000))
+    assert fetcher.fetch_url("https://www.sec.gov/x", max_bytes=100) == b"x" * 100
+    assert len(fetcher.fetch_url("https://www.sec.gov/x")) == 1000

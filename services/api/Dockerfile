@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 # System deps for psycopg2
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc \
+    libpq-dev gcc tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -21,7 +21,11 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
 
-# Graceful shutdown: gevent handles SIGTERM
+# Graceful shutdown. Without an init, PID 1 was `sh`, which never passes
+# SIGTERM on to python — every deploy/restart sat out the grace period and
+# ended in SIGKILL ("exited with status 137"). tini forwards the signal and
+# `exec` makes python the process that receives it.
 STOPSIGNAL SIGTERM
 
-CMD ["sh", "-c", "flask db upgrade && python main.py"]
+ENTRYPOINT ["tini", "--"]
+CMD ["sh", "-c", "flask db upgrade && exec python main.py"]

@@ -63,6 +63,19 @@ MAX_QUOTE_CHARS = 400
 # than a reader will check.
 MAX_EVIDENCE = 3
 
+# Only this much of each document is indexed. The word list and shingle
+# index cost ~100 bytes per source character (a 1.3M-char exhibit held
+# 133 MB, peaking near 200 MB while building), and the ingest worker has
+# 512 MB — one long EX-99 used to be enough to get it OOM-killed. The model
+# sees only the first 8k characters of an exhibit (briefing.py's text caps),
+# so an exhibit loses nothing it could quote; a primary document longer
+# than this is rare for an 8-K, and a quote from an item past the cap is
+# dropped like any other unverifiable quote. Truncating
+# is also safe for the text fragments: a passage unique in the prefix is
+# still the *first* occurrence in the full document, which is the one a
+# browser highlights.
+MAX_INDEXED_CHARS = 250_000
+
 # Punctuation the model swaps freely while copying. Folded away for
 # matching only — the stored quote keeps whatever the filing used.
 _PUNCT_FOLD = str.maketrans({
@@ -131,6 +144,9 @@ class _Index:
     __slots__ = ("doc", "words", "shingles", "fragments")
 
     def __init__(self, doc: SourceDoc) -> None:
+        if len(doc.text) > MAX_INDEXED_CHARS:
+            doc = SourceDoc(label=doc.label, url=doc.url,
+                            text=doc.text[:MAX_INDEXED_CHARS])
         self.doc = doc
         self.words = _keyed_words(doc.text)
         self.shingles: dict[tuple[str, ...], list[int]] = defaultdict(list)

@@ -199,3 +199,27 @@ class TestEndToEndLink:
         span = builder._simulate(snippets[0], snippets[1] if len(snippets) > 1 else None)
         highlighted = re.sub(r"\s+", " ", docs[0].text[span[0]:span[1]]).strip()
         assert highlighted == entry["quote"]
+
+
+class TestIndexBound:
+    """The index costs ~100 bytes per source character; an unbounded one
+    got the 512 MB ingest worker OOM-killed on a long EX-99."""
+
+    def test_quote_in_indexed_prefix_still_verifies(self):
+        from evidence import MAX_INDEXED_CHARS
+        lead = "Acme Corp announced record third quarter revenue of $12 million today."
+        text = lead + "\n" + ("filler words repeat here. " * (MAX_INDEXED_CHARS // 10))
+        [entry] = resolve_evidence(
+            [("", "Acme Corp announced record third quarter revenue of $12 million")],
+            [SourceDoc(label="EX-99.1", url=DOC_URL, text=text)],
+        )
+        assert entry["quote"].startswith("Acme Corp announced record")
+
+    def test_text_past_the_cap_is_not_indexed(self):
+        from evidence import MAX_INDEXED_CHARS
+        tail = "Acme Corp announced record third quarter revenue of $12 million today."
+        text = ("filler words repeat here. " * (MAX_INDEXED_CHARS // 10)) + tail
+        assert resolve_evidence(
+            [("", "Acme Corp announced record third quarter revenue of $12 million")],
+            [SourceDoc(label="EX-99.1", url=DOC_URL, text=text)],
+        ) == []
