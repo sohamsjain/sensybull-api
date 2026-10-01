@@ -74,6 +74,12 @@ class TestCompanyTypeahead:
         # Compact format: identity plus what the results list shows (cap, industry)
         assert set(results[0].keys()) == {'id', 'name', 'ticker', 'market_cap', 'industry', 'has_fundamentals'}
 
+    def test_typeahead_is_browser_cacheable(self, client, sample_company):
+        """Public and the same for every reader, so the browser keeps it."""
+        resp = client.get('/api/v1/companies/search?q=App')
+        assert resp.status_code == 200
+        assert resp.headers['Cache-Control'] == 'public, max-age=300'
+
     def test_typeahead_requires_q(self, client, auth_headers):
         resp = client.get('/api/v1/companies/search', headers=auth_headers)
         assert resp.status_code == 400

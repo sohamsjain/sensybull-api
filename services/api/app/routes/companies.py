@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from marshmallow import ValidationError
 import sqlalchemy as sa
+import sqlalchemy.orm as so
 from app import db, limiter
 from app.models.company import Company
 from app.utils.schemas import CompanySchema, CompanyCreateSchema
@@ -36,6 +37,11 @@ def _search_query(q: str):
     return query.order_by(relevance, Company.market_cap.desc().nullslast(), Company.name)
 
 
+# The universe changes once a day (sync-companies), so a typeahead answer can
+# be reused for minutes: by Redis across readers, and by the browser for one.
+SEARCH_CACHE_SECONDS = 300
+
+
 @companies_bp.route('/search', methods=['GET'])
 @limiter.limit('120 per minute')
 def search_companies():
@@ -52,18 +58,33 @@ def search_companies():
     limit = request.args.get('limit', 10, type=int)
     limit = min(max(limit, 1), 50)
 
-    results = _search_query(q).limit(limit).all()
-    return jsonify({
-        'results': [
+    from app.services.market_data.cache import cache_get, cache_set
+
+    cache_key = f'search:v1:{q.lower()}:{limit}'
+    payload = cache_get(cache_key)
+    if payload is None:
+        # selectinload: one query for every row's fundamentals, not one per row.
+        rows = (
+            _search_query(q)
+            .options(so.selectinload(Company.fundamentals))
+            .limit(limit)
+            .all()
+        )
+        payload = {'results': [
             {
                 'id': c.id, 'name': c.name, 'ticker': c.ticker,
                 'market_cap': c.market_cap,
                 'industry': c.fundamentals.industry if c.fundamentals else None,
                 'has_fundamentals': bool(c.fundamentals and c.fundamentals.has_fundamentals),
             }
-            for c in results
-        ],
-    })
+            for c in rows
+        ]}
+        cache_set(cache_key, payload, SEARCH_CACHE_SECONDS)
+
+    response = jsonify(payload)
+    # Public and identical for every reader, so the browser may keep it too.
+    response.headers['Cache-Control'] = f'public, max-age={SEARCH_CACHE_SECONDS}'
+    return response
 
 
 @companies_bp.route('/', methods=['GET'])
