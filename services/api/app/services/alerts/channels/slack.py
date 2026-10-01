@@ -5,7 +5,6 @@ import logging
 import requests
 
 from app.services.alerts.channels.base import NotificationChannel
-from app.utils.company_name import display_company_name
 
 log = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class SlackChannel(NotificationChannel):
                 'type': 'header',
                 'text': {
                     'type': 'plain_text',
-                    'text': f"{event.ticker or display_company_name(event.company_name)}: {briefing.get('headline', 'New SEC Filing')}",
+                    'text': f"{event.ticker or event.company_name}: {briefing.get('headline', 'New SEC Filing')}",
                 },
             },
             {
