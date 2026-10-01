@@ -4,6 +4,7 @@ import json
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
+from app.utils.company_name import display_company_name
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class PushChannel(NotificationChannel):
 
         briefing = event.briefing_json or {}
         tier_label = TIER_LABELS.get(event.max_tier, 'Low')
-        title = f"{event.ticker or event.company_name}: {briefing.get('headline', 'New SEC filing')}"
+        title = f"{event.ticker or display_company_name(event.company_name)}: {briefing.get('headline', 'New SEC filing')}"
         body = (briefing.get('summary') or '')[:180] \
             or f'{tier_label} priority {event.signal_type} filing'
         payload = json.dumps({

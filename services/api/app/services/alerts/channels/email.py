@@ -1,6 +1,7 @@
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
+from app.utils.company_name import display_company_name
 from app.services.email.renderer import render
 from app.services.email.resend_client import EmailMessage
 
@@ -72,7 +73,7 @@ class EmailChannel(NotificationChannel):
             'support_email': cfg.get('SUPPORT_EMAIL', ''),
             'user_name': user.name,
             'ticker': event.ticker or '',
-            'company_name': event.company_name or '',
+            'company_name': display_company_name(event.company_name),
             'price': price,
             'important': event.important,
             'headline': headline,
@@ -84,7 +85,7 @@ class EmailChannel(NotificationChannel):
 
         html, text = render('filing_alert', context)
 
-        subject = f"{event.company_name or event.ticker}: {headline}"
+        subject = f"{display_company_name(event.company_name) or event.ticker}: {headline}"
 
         message = EmailMessage(
             to=user.email,
