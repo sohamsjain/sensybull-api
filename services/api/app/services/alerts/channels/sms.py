@@ -3,6 +3,7 @@
 import logging
 
 from app.services.alerts.channels.base import NotificationChannel
+from app.utils.company_name import display_company_name
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class SmsChannel(NotificationChannel):
 
         body = (
             f"[Sensybull] {tier_label} Priority\n"
-            f"{event.ticker or event.company_name}: "
+            f"{event.ticker or display_company_name(event.company_name)}: "
             f"{briefing.get('headline', 'New SEC Filing')}\n"
             f"{frontend_url}/watchlist"
         )
