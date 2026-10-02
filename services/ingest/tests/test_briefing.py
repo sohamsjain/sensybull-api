@@ -551,6 +551,37 @@ class TestUnusableAnswers:
         assert result.mode == "facts_only"
         assert client.chat.completions.create.call_count == len(briefing_module._MODEL_CHAIN)
 
+    def test_groq_json_validate_failed_falls_through(self):
+        """JSON mode rejects bad output server-side as a 400, so the model's
+        unusable answer arrives as an exception, not as text we parse."""
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            _FakeGroqError(
+                "Error code: 400 - {'error': {'message': \"Failed to validate "
+                "JSON. Please adjust your prompt. See 'failed_generation' for "
+                "more details.\", 'type': 'invalid_request_error', "
+                "'code': 'json_validate_failed', 'failed_generation': ''}}",
+                status_code=400, code=None),
+            self._good_response(),
+        ]
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(_item_filing(), {})
+        assert result.mode == "llm"
+        models = [c.kwargs["model"]
+                  for c in client.chat.completions.create.call_args_list]
+        assert models == briefing_module._MODEL_CHAIN[:2]
+
+    def test_other_400_still_does_not_burn_the_chain(self):
+        """A bad request fails identically on every model."""
+        client = MagicMock()
+        client.chat.completions.create.side_effect = _FakeGroqError(
+            "context length exceeded", status_code=400,
+            code="invalid_request_error")
+        with patch.object(briefing_module, "Groq", return_value=client):
+            result = generate_briefing(_item_filing(), {})
+        assert result.mode == "facts_only"
+        assert client.chat.completions.create.call_count == 1
+
     def test_transport_error_does_not_burn_the_chain(self):
         """A 500 says nothing about the model — retrying the rest is waste."""
         client = MagicMock()

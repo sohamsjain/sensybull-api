@@ -419,6 +419,26 @@ def _is_model_unavailable(exc: Exception) -> bool:
     return "model_not_found" in str(exc) or "does not exist" in str(exc)
 
 
+def _is_json_validate_failed(exc: Exception) -> bool:
+    """Return True if Groq rejected the model's own output as invalid JSON.
+
+    In JSON mode Groq validates the generation server-side and answers HTTP
+    400 json_validate_failed instead of handing back the bad text — so a
+    malformed or empty answer never reaches our own empty/JSONDecodeError
+    checks. It is a 400, but it describes this generation, not our request:
+    the next model (or the same prompt another time) can succeed. October
+    2026: gpt-oss-120b returned an empty failed_generation on an ordinary
+    Item 5.02 8-K and, because a 400 used to stop the chain, the filing
+    published facts-only without ever trying gpt-oss-20b or Qwen.
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status not in (400, None):
+        return False
+    if getattr(exc, "code", None) == "json_validate_failed":
+        return True
+    return "json_validate_failed" in str(exc)
+
+
 class _EmptyCompletion(RuntimeError):
     """The model answered with no content at all (nothing to parse)."""
 
@@ -456,6 +476,8 @@ def _fallthrough_reason(exc: Exception) -> str | None:
         return "unavailable"
     if isinstance(exc, _EmptyCompletion):
         return "returned an empty completion"
+    if _is_json_validate_failed(exc):
+        return "failed Groq's JSON validation"
     if isinstance(exc, json.JSONDecodeError):
         return "returned unparseable JSON"
     return None
