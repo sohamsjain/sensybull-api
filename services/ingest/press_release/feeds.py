@@ -26,6 +26,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
+from parser import strip_html
+from press_release.article import extract_issuer, extract_release_text
+
 log = logging.getLogger(__name__)
 
 _DC_NS = "http://purl.org/dc/elements/1.1/"
@@ -38,6 +41,9 @@ _MIN_INLINE_BODY_CHARS = 600
 # GlobeNewswire's feed endpoint is slow to first byte; 30s produced
 # spurious timeouts in live probing.
 _DEFAULT_TIMEOUT = 60
+# Article pages are on the latency path of every release: fail fast and
+# fall back to the teaser rather than hold a worker for a minute.
+_ARTICLE_TIMEOUT = 10
 
 
 def _user_agent() -> str:
@@ -61,6 +67,9 @@ class PRRelease:
     metadata_tickers: list[str] = field(default_factory=list)
     raw_categories: list[str] = field(default_factory=list)
     language: str = ""                  # dc:language when the wire provides it
+    # The inline body is only a teaser whatever its length (FMP's `text`),
+    # so the article page is always fetched.
+    body_is_teaser: bool = False
 
 
 @dataclass
@@ -84,7 +93,8 @@ class WireConfig:
 _validators: dict[str, dict[str, str]] = {}
 
 
-def fetch_pr_url(url: str, retries: int = 3, conditional: bool = False) -> bytes | None:
+def fetch_pr_url(url: str, retries: int = 3, conditional: bool = False,
+                 timeout: float = _DEFAULT_TIMEOUT) -> bytes | None:
     """Fetch a URL with retries/backoff.
 
     With conditional=True, sends stored ETag/Last-Modified and returns None
@@ -106,7 +116,7 @@ def fetch_pr_url(url: str, retries: int = 3, conditional: bool = False) -> bytes
     last_exc: Exception = RuntimeError("no attempts made")
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=_DEFAULT_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
                 if resp.headers.get("Content-Encoding", "") == "gzip":
                     raw = gzip.decompress(raw)
@@ -194,17 +204,31 @@ def parse_wire_feed(data: bytes, config: WireConfig) -> list[PRRelease]:
 
 
 def fetch_release_body(release: PRRelease) -> str:
-    """Return the release's body HTML, fetching the article page when the
-    inline body is teaser-thin. Never raises."""
-    if len(release.body_html) >= _MIN_INLINE_BODY_CHARS or not release.url:
-        return release.body_html
+    """Plain text of the release, fetching the article page when the inline
+    body is a teaser. Never raises.
+
+    From a fetched page only the release itself is kept (dateline to source
+    footer, see article.py) — the whole page is mostly navigation, which
+    would crowd the release out of the ticker scan and the LLM prompt.
+    The page's issuer credit (PR Newswire's "News provided by") fills
+    release.issuer_name when the source gave none.
+    """
+    inline = strip_html(release.body_html).strip() if release.body_html else ""
+    thin = release.body_is_teaser or len(inline) < _MIN_INLINE_BODY_CHARS
+    if not thin or not release.url:
+        return inline
     try:
-        raw = fetch_pr_url(release.url, retries=2)
+        raw = fetch_pr_url(release.url, retries=2, timeout=_ARTICLE_TIMEOUT)
         if raw:
-            return raw.decode("utf-8", errors="replace")
+            page = raw.decode("utf-8", errors="replace")
+            if not release.issuer_name:
+                release.issuer_name = extract_issuer(page)
+            extracted = extract_release_text(page)
+            if len(extracted) > len(inline):
+                return extracted
     except Exception as exc:
         log.debug("Article fetch failed (%s): %s", release.url, exc)
-    return release.body_html
+    return inline
 
 
 # ---------------------------------------------------------------------------

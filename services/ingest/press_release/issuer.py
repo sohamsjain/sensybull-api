@@ -47,7 +47,9 @@ _SCAN_CHARS = 1_500
 # Shape of a plausible US ticker symbol, applied to wire-metadata candidates
 # after stripping an exchange prefix. Rejects ISINs ("US75955J2042"),
 # numeric release IDs, and category prose that ride in the same feed fields.
-_METADATA_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+# Share classes arrive as "BRK.B" (wires) or "BRK-B" (FMP, and the SEC
+# ticker map's own spelling).
+_METADATA_TICKER_RE = re.compile(r"^[A-Z]{1,5}([.-][A-Z])?$")
 
 # Law-firm / shareholder-suit spam. Matched against headline + body head,
 # case-insensitive. Extend freely — a false positive here only suppresses a
@@ -68,6 +70,11 @@ _BLOCKLIST_PATTERNS = [
     r"reminds?\s+investors",
     r"losses?\s+in\s+excess\s+of",
     r"contact\s+the\s+firm",
+    r"investor\s+counsel",
+    r"class\s+period",
+    r"securities\s+claims",
+    r"(have|has)\s+(the\s+)?opportunity\s+to\s+lead",
+    r"\bLLP\b.{0,60}\b(reminds|informs|announces|investigat)",
 ]
 
 # Known securities-plaintiff firms that flood the wires with ticker-tagged
@@ -91,6 +98,31 @@ _LAW_FIRM_NAMES = [
     "howard g. smith",
     "wolf haldenstein",
     "bernstein liebhard",
+    "robbins llp",
+    "gross law firm",
+    "block & leviton",
+    "holzer & holzer",
+    "gainey mckenna",
+    "frank r. cruz",
+    "ademi firm",
+    "halper sadeh",
+    "brodsky & smith",
+    "monteverde & associates",
+    "rigrodsky law",
+    "kuehn law",
+    "wohl & fruchter",
+    "grabar law",
+    "berger montague",
+    "scott+scott",
+    "labaton",
+    "saxena white",
+    "bernstein litowitz",
+    "dicello levitt",
+    "lieff cabraser",
+    "jakubowitz",
+    "zhang investor law",
+    "edelson lechtzer",
+    "law offices of",
 ]
 
 _compiled_blocklist = [re.compile(p, re.IGNORECASE) for p in _BLOCKLIST_PATTERNS]
@@ -161,6 +193,23 @@ def is_blocklisted(headline: str, body: str) -> str | None:
         if name in lowered:
             return name
     return None
+
+
+def names_company(norm_company: str, headline: str, body: str) -> bool:
+    """Does the release text name the company? The check for a release
+    whose ticker came only from metadata (FMP's symbol) with nothing else
+    to verify it against — a wrong tag (a nonprofit's "EV mobile clinic"
+    filed under ticker EV) names some other organization throughout."""
+    if not norm_company:
+        return False
+    text = " " + normalize_company_name(f"{headline} {body[:_SCAN_CHARS]}") + " "
+    if f" {norm_company} " in text:
+        return True
+    # SEC names are often longer than the name a release uses
+    # ("CENTERPOINT ENERGY INC" vs "CenterPoint"): accept the leading
+    # distinctive token when it's long enough not to be a common word.
+    first = norm_company.split()[0]
+    return len(first) >= 5 and f" {first} " in text
 
 
 def _names_match(norm_issuer: str, norm_company: str) -> bool:

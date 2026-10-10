@@ -13,8 +13,6 @@ _LONG_BODY = "Material business development text. " * 30
 def _llm_response(**overrides):
     base = {
         "issued_by_company": True,
-        "material": True,
-        "headline": "Acme acquires Widgets Co for $500M",
         "summary": "Acme agreed to acquire Widgets Co for $500 million in cash.",
         "primary_event_type": "Acquisition",
         "event_types": ["Acquisition", "Material Agreement"],
@@ -32,29 +30,20 @@ def _llm_response(**overrides):
 
 @pytest.mark.parametrize("headline", [
     "Acme to Present at the 2026 Growth Investor Conference",
-    "Acme CEO to Participate in Fireside Chat",
-    "Acme Named a Leader in Widget Automation",
     "Acme Wins Prestigious Design Award",
     "Acme Celebrates 25th Anniversary",
-    "Acme to Host Webinar on Widget Trends",
 ])
-def test_prefilter_drops_promo(headline):
-    assert prefilter_reason(headline, _LONG_BODY) is not None
+def test_promo_headlines_are_kept(headline):
+    """Every first-party PR publishes (Oct 2026) — no promo prefilter."""
+    assert prefilter_reason(headline, _LONG_BODY) is None
 
 
 def test_prefilter_drops_thin_body():
     assert prefilter_reason("Acme Announces Acquisition", "too short") == "body_too_short"
 
 
-def test_prefilter_passes_material_news():
+def test_prefilter_passes_ordinary_news():
     assert prefilter_reason("Acme Announces Definitive Merger Agreement", _LONG_BODY) is None
-
-
-def test_prefilter_does_not_call_llm():
-    with patch.object(materiality, "_chat_json") as mock_chat:
-        reason = prefilter_reason("Acme to Present at a Conference", _LONG_BODY)
-        assert reason is not None
-        mock_chat.assert_not_called()
 
 
 # ── prompt shape ──────────────────────────────────────────────────────────
@@ -93,18 +82,24 @@ def test_not_first_party_drops():
     assert isinstance(result, Drop) and result.reason == "llm_not_first_party"
 
 
-def test_not_material_drops():
-    with patch.object(materiality, "_chat_json",
-                      return_value=_llm_response(material=False)):
-        result = _classify()
-    assert isinstance(result, Drop) and result.reason == "llm_not_material"
+def test_routine_release_in_other_category_publishes():
+    resp = _llm_response(primary_event_type="Other", event_types=["Other"],
+                         significance="Low", deal_terms={})
+    with patch.object(materiality, "_chat_json", return_value=resp):
+        briefing = _classify()
+    assert not isinstance(briefing, Drop)
+    assert briefing.primary_event_type == "Other"
+    assert briefing.significance == "Low"
 
 
-def test_other_category_drops():
-    with patch.object(materiality, "_chat_json",
-                      return_value=_llm_response(primary_event_type="Other")):
-        result = _classify()
-    assert isinstance(result, Drop) and result.reason == "llm_no_material_category"
+def test_headline_is_the_release_title():
+    with patch.object(materiality, "_chat_json", return_value=_llm_response()):
+        assert _classify().headline == "Raw headline"
+
+
+def test_prompt_has_no_materiality_gate():
+    assert '"material"' not in materiality._PR_SYSTEM_PROMPT
+    assert '"headline" —' not in materiality._PR_SYSTEM_PROMPT   # not a requested field
 
 
 def test_insufficient_content_drops():
