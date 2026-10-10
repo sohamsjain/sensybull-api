@@ -1,3 +1,4 @@
 python-dotenv
 groq==0.25.0
 redis>=5.0.0
+tzdata

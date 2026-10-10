@@ -29,8 +29,10 @@ from events import FilingEvent, FilingEventBriefing
 from parser import strip_html
 from publisher import publish_filing
 
+from press_release import fmp
 from press_release import issuer as issuer_mod
 from press_release import materiality
+from press_release.language import is_english
 from press_release.feeds import enabled_wires, fetch_pr_url, fetch_release_body, parse_wire_feed
 from press_release.fingerprint import build_fingerprints, fingerprints_match
 
@@ -63,6 +65,25 @@ def _poll_interval() -> int:
 
 def pr_ingest_enabled() -> bool:
     return os.environ.get("PR_INGEST_ENABLED", "").strip() in ("1", "true", "yes")
+
+
+def pr_source() -> str:
+    """"fmp" (default): FMP's aggregated press-release endpoint. "rss": the
+    original per-wire RSS adapters (GlobeNewswire + PR Newswire only)."""
+    return os.environ.get("PR_SOURCE", "fmp").strip().lower() or "fmp"
+
+
+def _dry_run() -> bool:
+    """PR_DRY_RUN=1 runs every gate (LLM included) and logs what would
+    publish, without publishing."""
+    return os.environ.get("PR_DRY_RUN", "").strip() in ("1", "true", "yes")
+
+
+def _env_float(name: str, default: float, minimum: float) -> float:
+    try:
+        return max(minimum, float(os.environ.get(name, default)))
+    except ValueError:
+        return default
 
 
 def _synthetic_edgar_id(wire: str, guid: str) -> str:
@@ -139,15 +160,23 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
     LLM/transport failures propagate to the caller (retried next poll).
     """
     # Wires syndicate translations of the same release; the product is
-    # English-only and the English original arrives separately.
+    # English-only and the English original arrives separately. The wire's
+    # tag is a fast path; FMP has none, so the text itself is checked too —
+    # once on the teaser (before paying for an article fetch), once on the
+    # full body.
     language = (release.language or "").strip().lower()
+    headline = release.headline.strip()
     if language and not language.startswith("en"):
         counters["non_english"] += 1
         return None
+    if not is_english(f"{headline}\n{strip_html(release.body_html or '')}"):
+        counters["non_english"] += 1
+        return None
 
-    body_html = fetch_release_body(release)
-    body_text = strip_html(body_html).strip() if body_html else ""
-    headline = release.headline.strip()
+    body_text = fetch_release_body(release)
+    if not is_english(body_text):
+        counters["non_english"] += 1
+        return None
 
     reason = materiality.prefilter_reason(headline, body_text)
     if reason:
@@ -196,9 +225,9 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         return None
 
     briefing = result
-    # Gated PRs are never routine: High significance rides the tier-1
-    # alert/filter lane, everything else tier 2.
-    max_tier = 1 if briefing.significance == "High" else 2
+    # High significance rides the tier-1 alert/filter lane; Low (only
+    # reachable with PR_REQUIRE_MATERIAL=0) is routine.
+    max_tier = {"High": 1, "Low": 3}.get(briefing.significance, 2)
 
     return FilingEvent(
         edgar_id=_synthetic_edgar_id(release.wire, release.guid),
@@ -213,7 +242,9 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         items=[],
         exhibits=[],
         briefing=FilingEventBriefing(
-            headline=briefing.headline,
+            # The release's own title, not an LLM rewrite: a press release
+            # already has a headline written for readers (8-Ks don't).
+            headline=headline,
             summary=briefing.summary,
             primary_event_type=briefing.primary_event_type,
             significance=briefing.significance,
@@ -236,12 +267,32 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 # Poll loop
 # ---------------------------------------------------------------------------
 
+def _publish(event: FilingEvent, fp_entries: list[dict], counters: dict) -> None:
+    """Publish (or, in dry-run, log) an event and remember its fingerprints
+    for cross-wire dedup."""
+    if _dry_run():
+        log.info("PR DRY RUN would publish: [%s] %s ticker=%s tier=%d types=%s",
+                 event.source, event.briefing.headline, event.ticker,
+                 event.max_tier, event.event_types)
+    else:
+        publish_filing(event.to_json())
+    counters["published"] += 1
+    fp_entries.append({
+        "ticker": event.ticker,
+        "exact": event.content_fingerprint,
+        "headline": event.headline_fingerprint,
+        "simhash": event.content_simhash,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
+
+
 def _new_counters() -> dict:
     return {
         "fetched": 0, "non_english": 0, "prefilter_dropped": 0,
         "blocklisted": 0, "no_ticker": 0, "issuer_fail": 0,
         "issuer_unverified": 0, "cross_wire_dup": 0, "llm_calls": 0,
         "llm_dropped": 0, "llm_failed": 0, "published": 0,
+        "stale": 0,
     }
 
 
@@ -328,15 +379,7 @@ async def pr_poll_loop(get_ticker_index) -> None:
                         if event is None:
                             continue
 
-                        publish_filing(event.to_json())
-                        counters["published"] += 1
-                        fp_entries.append({
-                            "ticker": event.ticker,
-                            "exact": event.content_fingerprint,
-                            "headline": event.headline_fingerprint,
-                            "simhash": event.content_simhash,
-                            "ts": datetime.now(timezone.utc).isoformat(),
-                        })
+                        _publish(event, fp_entries, counters)
                         # Crash-safety like the 8-K loop: persist right after
                         # each published (LLM-expensive) event
                         seen_store.save_seen(seen, PR_SEEN_FILE)
@@ -371,3 +414,154 @@ async def pr_poll_loop(get_ticker_index) -> None:
             log.info("PR poll: %s", " ".join(f"{k}={v}" for k, v in counters.items() if v))
 
         await asyncio.sleep(interval)
+
+
+# ---------------------------------------------------------------------------
+# FMP poll loop (default source)
+# ---------------------------------------------------------------------------
+# Polling and processing are decoupled: the poller hits FMP every
+# PR_FMP_POLL_SECONDS and only enqueues releases it hasn't seen; PR_WORKERS
+# workers run the gate chain (article fetch + LLM) concurrently. A burst of
+# releases at 8:00 ET therefore costs one LLM round-trip of latency, not
+# one per release in the burst, and a slow LLM call never delays the poll.
+
+_STATS_EVERY_SECONDS = 60
+
+
+def _age_minutes(published_iso: str) -> float | None:
+    try:
+        dt = datetime.fromisoformat(published_iso)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds() / 60
+
+
+async def fmp_poll_loop(get_ticker_index) -> None:
+    """Poll FMP's latest press releases forever.
+
+    get_ticker_index: zero-arg callable returning the current inverted
+    SEC ticker index — a release whose symbol isn't in it isn't a US
+    SEC registrant and is dropped as `no_ticker`/`issuer_fail`.
+    """
+    loop = asyncio.get_running_loop()
+    poll_every = _env_float("PR_FMP_POLL_SECONDS", 1.0, 0.25)
+    workers = int(_env_float("PR_WORKERS", 4, 1))
+    # Older than this when first seen → not news any more. Also what keeps
+    # a cold start (empty seen-file after a deploy) from briefing the whole
+    # backlog the endpoint returns.
+    max_age = _env_float("PR_MAX_AGE_MINUTES", 30, 1)
+
+    seen = seen_store.load_seen(PR_SEEN_FILE)
+    fp_entries = _load_fingerprints()
+    queue: asyncio.Queue = asyncio.Queue()
+    in_flight: set[str] = set()
+    attempts: dict[str, int] = {}
+    retry_at: dict[str, float] = {}
+    counters = _new_counters()
+    state = {"dirty": False}
+
+    def mark_seen(key: str) -> None:
+        seen[key] = datetime.now(timezone.utc).isoformat()
+        state["dirty"] = True
+
+    async def worker() -> None:
+        while True:
+            release = await queue.get()
+            key = f"fmp:{release.guid}"
+            try:
+                event = await loop.run_in_executor(
+                    None, process_release,
+                    release, get_ticker_index(), fp_entries, counters,
+                )
+            except Exception as exc:
+                counters["llm_failed"] += 1
+                n = attempts.get(key, 0) + 1
+                if n >= _MAX_LLM_ATTEMPTS:
+                    mark_seen(key)
+                    attempts.pop(key, None)
+                    log.warning("PR giving up after %d attempts (%s): %s", n, key, exc)
+                else:
+                    attempts[key] = n
+                    retry_at[key] = time.monotonic() + 30 * n
+                    log.warning("PR processing failed attempt %d (%s): %s", n, key, exc)
+                event = None
+            else:
+                mark_seen(key)
+                attempts.pop(key, None)
+            finally:
+                in_flight.discard(key)
+                queue.task_done()
+
+            if event is not None:
+                _publish(event, fp_entries, counters)
+                log.info("Published PR: [%s] %s ticker=%s tier=%d",
+                         event.source, event.briefing.headline,
+                         event.ticker, event.max_tier)
+                # Crash-safety: persist right after each (LLM-expensive) publish
+                seen_store.save_seen(seen, PR_SEEN_FILE)
+                _save_fingerprints(fp_entries)
+                state["dirty"] = False
+
+    worker_tasks = [asyncio.create_task(worker()) for _ in range(workers)]
+    log.info("PR ingest enabled: FMP every %.2fs, %d worker(s), max age %dm, seen=%d%s",
+             poll_every, workers, max_age, len(seen),
+             " [DRY RUN]" if _dry_run() else "")
+
+    backoff_step = 0
+    last_stats = time.monotonic()
+    try:
+        while True:
+            started = time.monotonic()
+            if not get_ticker_index():
+                log.warning("PR poll skipped — ticker index empty")
+                await asyncio.sleep(30)
+                continue
+            try:
+                rows = await loop.run_in_executor(None, fmp.fetch_latest)
+                backoff_step = 0
+            except Exception as exc:
+                backoff_step = min(backoff_step + 1, 6)
+                delay = min(2 ** backoff_step, 60)
+                log.warning("FMP press-release poll failed (%s) — retrying in %ds", exc, delay)
+                await asyncio.sleep(delay)
+                continue
+
+            releases, other_wire = fmp.parse_fmp_rows(rows)
+            for release in reversed(releases):          # oldest first
+                key = f"fmp:{release.guid}"
+                if key in seen or key in in_flight:
+                    continue
+                if retry_at.get(key, 0) > time.monotonic():
+                    continue
+                retry_at.pop(key, None)
+                age = _age_minutes(release.published)
+                if age is not None and age > max_age:
+                    counters["stale"] += 1
+                    mark_seen(key)
+                    continue
+                counters["fetched"] += 1
+                in_flight.add(key)
+                queue.put_nowait(release)
+
+            if state["dirty"] and not in_flight:
+                seen_store.save_seen(seen, PR_SEEN_FILE)
+                state["dirty"] = False
+
+            if time.monotonic() - last_stats >= _STATS_EVERY_SECONDS:
+                if counters["fetched"] or counters["stale"]:
+                    log.info("PR poll (last %ds): %s queue=%d other_wire_rows=%d",
+                             _STATS_EVERY_SECONDS,
+                             " ".join(f"{k}={v}" for k, v in counters.items() if v),
+                             queue.qsize(), other_wire)
+                # Reset in place: workers increment these keys from executor
+                # threads, so they must never be missing.
+                for k in counters:
+                    counters[k] = 0
+                last_stats = time.monotonic()
+
+            await asyncio.sleep(max(0.0, poll_every - (time.monotonic() - started)))
+    finally:
+        for t in worker_tasks:
+            t.cancel()

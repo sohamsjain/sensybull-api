@@ -26,6 +26,9 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
+from parser import strip_html
+from press_release.article import extract_release_text
+
 log = logging.getLogger(__name__)
 
 _DC_NS = "http://purl.org/dc/elements/1.1/"
@@ -194,17 +197,25 @@ def parse_wire_feed(data: bytes, config: WireConfig) -> list[PRRelease]:
 
 
 def fetch_release_body(release: PRRelease) -> str:
-    """Return the release's body HTML, fetching the article page when the
-    inline body is teaser-thin. Never raises."""
-    if len(release.body_html) >= _MIN_INLINE_BODY_CHARS or not release.url:
-        return release.body_html
+    """Plain text of the release, fetching the article page when the inline
+    body is teaser-thin. Never raises.
+
+    From a fetched page only the release itself is kept (dateline to source
+    footer, see article.py) — the whole page is mostly navigation, which
+    would crowd the release out of the ticker scan and the LLM prompt.
+    """
+    inline = strip_html(release.body_html).strip() if release.body_html else ""
+    if len(inline) >= _MIN_INLINE_BODY_CHARS or not release.url:
+        return inline
     try:
         raw = fetch_pr_url(release.url, retries=2)
         if raw:
-            return raw.decode("utf-8", errors="replace")
+            extracted = extract_release_text(raw.decode("utf-8", errors="replace"))
+            if len(extracted) > len(inline):
+                return extracted
     except Exception as exc:
         log.debug("Article fetch failed (%s): %s", release.url, exc)
-    return release.body_html
+    return inline
 
 
 # ---------------------------------------------------------------------------

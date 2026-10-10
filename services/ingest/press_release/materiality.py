@@ -14,6 +14,7 @@ PR-specific.
 """
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 
@@ -58,6 +59,12 @@ _PROMO_PATTERNS = [
     r"\bbooth\b",
 ]
 _compiled_promo = [re.compile(p, re.IGNORECASE) for p in _PROMO_PATTERNS]
+
+
+def require_material() -> bool:
+    """PR_REQUIRE_MATERIAL=0 publishes every first-party release, not only
+    material ones (the first-party check always applies)."""
+    return os.environ.get("PR_REQUIRE_MATERIAL", "1").strip() not in ("0", "false", "no")
 
 
 @dataclass
@@ -183,14 +190,14 @@ def classify_release(headline: str, body_text: str, company_name: str,
         return Drop("llm_insufficient_content")
     if not data.get("issued_by_company"):
         return Drop("llm_not_first_party")
-    if not data.get("material"):
+    if require_material() and not data.get("material"):
         return Drop("llm_not_material")
 
     valid_map = {t.lower(): t for t in EVENT_TYPES}
     raw_primary = data.get("primary_event_type", "")
     primary = (valid_map.get(raw_primary.strip().lower(), "Other")
                if isinstance(raw_primary, str) and raw_primary else "Other")
-    if primary == "Other":
+    if primary == "Other" and require_material():
         return Drop("llm_no_material_category")
 
     out_headline = str(data.get("headline") or "").strip() or headline[:100]

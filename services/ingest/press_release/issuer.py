@@ -47,7 +47,9 @@ _SCAN_CHARS = 1_500
 # Shape of a plausible US ticker symbol, applied to wire-metadata candidates
 # after stripping an exchange prefix. Rejects ISINs ("US75955J2042"),
 # numeric release IDs, and category prose that ride in the same feed fields.
-_METADATA_TICKER_RE = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+# Share classes arrive as "BRK.B" (wires) or "BRK-B" (FMP, and the SEC
+# ticker map's own spelling).
+_METADATA_TICKER_RE = re.compile(r"^[A-Z]{1,5}([.-][A-Z])?$")
 
 # Law-firm / shareholder-suit spam. Matched against headline + body head,
 # case-insensitive. Extend freely — a false positive here only suppresses a
