@@ -88,8 +88,6 @@ services:
         value: "4"   # concurrent article-fetch + LLM passes
       - key: PR_DRY_RUN
         value: "1"   # run every gate, log "would publish", publish nothing — set 0 to go live
-      - key: PR_REQUIRE_MATERIAL
-        value: "1"   # 0 = every first-party release from a US-listed company, not only material ones
       - key: PR_POLL_INTERVAL
         value: "180" # RSS source only
       - key: PR_USER_AGENT

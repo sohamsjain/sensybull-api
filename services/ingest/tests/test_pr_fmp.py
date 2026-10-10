@@ -160,8 +160,7 @@ _INDEX = build_ticker_index({"0001130310": {"ticker": "CNP", "name": "CENTERPOIN
 
 def _llm(**kw):
     base = {
-        "issued_by_company": True, "material": True,
-        "headline": "LLM-rewritten headline",
+        "issued_by_company": True,
         "summary": "CenterPoint sent crews to Florida.",
         "primary_event_type": "Other", "event_types": ["Other"],
         "significance": "Low", "sentiment": "Neutral",
@@ -176,8 +175,7 @@ def _release(**kw):
     return release
 
 
-def test_wire_headline_kept_and_non_material_publishes_when_allowed(monkeypatch):
-    monkeypatch.setenv("PR_REQUIRE_MATERIAL", "0")
+def test_wire_headline_kept_and_routine_release_publishes():
     counters = pipeline._new_counters()
     with patch.object(materiality, "_chat_json", return_value=_llm()):
         event = pipeline.process_release(_release(), _INDEX, [], counters)
@@ -187,14 +185,6 @@ def test_wire_headline_kept_and_non_material_publishes_when_allowed(monkeypatch)
     assert event.source == "prnewswire"
     assert event.signal_type == "PR"
     assert event.max_tier == 3          # Low significance → routine
-
-
-def test_non_material_dropped_by_default(monkeypatch):
-    monkeypatch.delenv("PR_REQUIRE_MATERIAL", raising=False)
-    counters = pipeline._new_counters()
-    with patch.object(materiality, "_chat_json", return_value=_llm(material=False)):
-        assert pipeline.process_release(_release(), _INDEX, [], counters) is None
-    assert counters["llm_dropped"] == 1
 
 
 def test_untagged_translation_dropped_before_llm():
@@ -336,7 +326,7 @@ def test_sample_only_the_company_release_reaches_the_llm(fixture_text):
 
     def fake_llm(messages):
         reached.append(messages[1]["content"].split("\n", 2)[1])   # "Ticker: X"
-        return _llm(material=True, primary_event_type="Other")
+        return _llm()
 
     with patch.object(materiality, "_chat_json", side_effect=fake_llm):
         for r in releases:
@@ -372,12 +362,7 @@ def test_prn_issuer_credit_matching_the_company_verifies_it():
     ).encode()
     counters = pipeline._new_counters()
     with patch("press_release.feeds.fetch_pr_url", return_value=page), \
-         patch.object(materiality, "_chat_json", return_value=_llm(material=True, primary_event_type="Other")):
-        monkey = pytest.MonkeyPatch()
-        monkey.setenv("PR_REQUIRE_MATERIAL", "0")
-        try:
-            event = pipeline.process_release(_release(text=_EN_BODY[:300]), _INDEX, [], counters)
-        finally:
-            monkey.undo()
+         patch.object(materiality, "_chat_json", return_value=_llm()):
+        event = pipeline.process_release(_release(text=_EN_BODY[:300]), _INDEX, [], counters)
     assert event is not None and event.issuer_name == "CenterPoint Energy"
     assert counters["issuer_unverified"] == 0            # verified by the credit

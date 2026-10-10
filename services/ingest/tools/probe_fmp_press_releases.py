@@ -13,7 +13,7 @@ It reports what the pipeline depends on and can't be checked offline:
     row should be minutes old, not ~4h old or in the future);
   - `text` length (a teaser — the article page is always fetched);
   - with --gates, the deterministic gate chain per release (language,
-    promo prefilter, law-firm blocklist, ticker, issuer). No LLM calls,
+    thin-body check, law-firm blocklist, ticker, issuer). No LLM calls,
     nothing published.
 """
 

@@ -3,9 +3,12 @@ pipeline.py — press-release poll loop.
 
 Per release, in order (cheapest checks first; each drop is counted):
 
-  seen-set → promo/thin prefilter → law-firm blocklist → ticker
+  seen-set → language → law-firm blocklist → thin-body check → ticker
   extraction → issuer verification → cross-wire fingerprint dedup →
-  LLM materiality gate → publish to Redis `filing:new`.
+  LLM first-party check + briefing → publish to Redis `filing:new`.
+
+Every first-party English release from a US-listed company publishes;
+there is no materiality gate (Oct 2026).
 
 Publishing reuses the exact FilingEvent contract the 8-K pipeline uses;
 the API subscriber treats PRs identically apart from dedup (see
@@ -238,8 +241,7 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         return None
 
     briefing = result
-    # High significance rides the tier-1 alert/filter lane; Low (only
-    # reachable with PR_REQUIRE_MATERIAL=0) is routine.
+    # High significance rides the tier-1 alert/filter lane; Low is routine.
     max_tier = {"High": 1, "Low": 3}.get(briefing.significance, 2)
 
     return FilingEvent(
