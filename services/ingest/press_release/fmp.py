@@ -131,6 +131,7 @@ def parse_fmp_rows(rows: list) -> tuple[list[PRRelease], int]:
             body_html=row.get("text") or "",
             published=_to_iso(row.get("publishedDate") or row.get("date") or ""),
             metadata_tickers=[symbol] if symbol else [],
+            body_is_teaser=True,
         )
         order.append(url)
     return [by_url[u] for u in order], other_wire

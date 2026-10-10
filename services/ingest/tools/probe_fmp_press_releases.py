@@ -11,7 +11,7 @@ It reports what the pipeline depends on and can't be checked offline:
   - row shape (field names) and the publisher/site mix → wire mapping;
   - publishedDate vs. now, so PR_FMP_TIMEZONE can be confirmed (the newest
     row should be minutes old, not ~4h old or in the future);
-  - `text` length: a teaser means every release costs an article fetch;
+  - `text` length (a teaser — the article page is always fetched);
   - with --gates, the deterministic gate chain per release (language,
     promo prefilter, law-firm blocklist, ticker, issuer). No LLM calls,
     nothing published.
@@ -56,7 +56,7 @@ def main(argv: list[str]) -> None:
 
     lens = [len(r.get("text") or "") for r in rows]
     print(f"text length: min={min(lens)} median={statistics.median(lens):.0f} max={max(lens)} "
-          f"(< 600 chars triggers an article fetch)")
+          f"(FMP text is a teaser — every release costs an article fetch)")
 
     releases, other = fmp.parse_fmp_rows(rows)
     multi = [r for r in releases if len(r.metadata_tickers) > 1]

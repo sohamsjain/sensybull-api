@@ -169,8 +169,16 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
     if language and not language.startswith("en"):
         counters["non_english"] += 1
         return None
-    if not is_english(f"{headline}\n{strip_html(release.body_html or '')}"):
+    teaser = strip_html(release.body_html or "")
+    if not is_english(f"{headline}\n{teaser}"):
         counters["non_english"] += 1
+        return None
+    # Law-firm alerts give themselves away in the headline/teaser; dropping
+    # them here saves the article fetch.
+    blocked = issuer_mod.is_blocklisted(headline, teaser)
+    if blocked:
+        counters["blocklisted"] += 1
+        log.info("PR drop [%s] %.80s — blocklist:%s", release.wire, headline, blocked)
         return None
 
     body_text = fetch_release_body(release)
@@ -204,6 +212,11 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
                  release.wire, headline, tickers)
         return None
     if match_kind == "unverified":
+        if not issuer_mod.names_company(company["norm_name"], headline, body_text):
+            counters["issuer_fail"] += 1
+            log.info("PR drop [%s] %.80s — %s never named (tag without issuer)",
+                     release.wire, headline, company["ticker"])
+            return None
         counters["issuer_unverified"] += 1
         log.info("PR pass-through with unverified issuer [%s] %.80s ticker=%s",
                  release.wire, headline, company["ticker"])

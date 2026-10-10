@@ -35,6 +35,21 @@ _FOOTER_RE = re.compile(
 )
 
 
+# PR Newswire credits the issuing organization above every release:
+# "NEWS PROVIDED BY / CenterPoint Energy →" (the name links to a stable
+# /news/<org-slug>/ profile). Law-firm alerts are credited to the firm, so
+# this is the structured issuer field the issuer check needs.
+_PROVIDED_BY_RE = re.compile(r"News provided by\s*\n\s*([^\n]{2,120})", re.IGNORECASE)
+
+
+def extract_issuer(page_html: str) -> str:
+    """The page's issuing-organization credit, or "" when it has none."""
+    m = _PROVIDED_BY_RE.search(strip_html(page_html))
+    if not m:
+        return ""
+    return m.group(1).strip().rstrip("→ ").strip()
+
+
 def extract_release_text(page_html: str) -> str:
     """Plain text of the release on an article page, or "" when the page
     carries no recognisable dateline (caller keeps its inline body)."""

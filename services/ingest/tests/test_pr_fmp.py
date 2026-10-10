@@ -12,6 +12,14 @@ from press_release.article import extract_release_text
 from press_release.issuer import build_ticker_index, extract_tickers
 from press_release.language import is_english
 
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch):
+    """No network in tests: article fetches fail unless a test patches them."""
+    def fail(*a, **kw):
+        raise OSError("offline")
+    monkeypatch.setattr("press_release.feeds.fetch_pr_url", fail)
+
+
 _EN_BODY = (
     "HOUSTON, Oct. 10, 2026 /PRNewswire/ -- To help support customers and "
     "communities impacted by Hurricane Isaias along the Northwest Florida Coast, "
@@ -290,3 +298,86 @@ def test_loop_dry_run_does_not_publish(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pipeline, "_dry_run", lambda: True)
     assert _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh())], process) == []
+
+
+# ── the live FMP sample (Oct 10 2026) ─────────────────────────────────────
+
+_SAMPLE_INDEX = build_ticker_index({
+    f"{i:010d}": {"ticker": t, "name": n} for i, (t, n) in enumerate([
+        ("QFIN", "Qfin Holdings, Inc."), ("FRVO", "Fervo Energy Co"),
+        ("EV", "EATON VANCE CORP"),             # what FMP's "EV" tag resolves to
+        ("GOOG", "Alphabet Inc."), ("ARDX", "ARDELYX, INC."),
+        ("DNB", "Dun & Bradstreet Holdings, Inc."), ("CELH", "Celsius Holdings, Inc."),
+        ("AVEX", "AEVEX Corp"), ("UWMC", "UWM Holdings Corp"),
+        ("XTIA", "XTI Aerospace, Inc."), ("GDDY", "GoDaddy Inc."),
+        ("PZZA", "PAPA JOHNS INTERNATIONAL INC"), ("HDB", "HDFC BANK LTD"),
+        ("FTK", "FLOTEK INDUSTRIES INC/CN/"), ("CNP", "CENTERPOINT ENERGY INC"),
+        ("MRP", "Millrose Properties, Inc."), ("LINC", "LINCOLN EDUCATIONAL SERVICES CORP"),
+    ], start=1)
+})
+
+
+def _sample_releases(fixture_text):
+    import json
+    return fmp.parse_fmp_rows(json.loads(fixture_text("pr/fmp_latest.json")))
+
+
+def test_sample_drops_newsfile_rows(fixture_text):
+    releases, other = _sample_releases(fixture_text)
+    assert other == 10                                   # Newsfile Corp rows
+    assert {r.wire for r in releases} == {"prnewswire", "businesswire"}
+    assert all(r.body_is_teaser for r in releases)
+
+
+def test_sample_only_the_company_release_reaches_the_llm(fixture_text):
+    releases, _ = _sample_releases(fixture_text)
+    counters = pipeline._new_counters()
+    reached = []
+
+    def fake_llm(messages):
+        reached.append(messages[1]["content"].split("\n", 2)[1])   # "Ticker: X"
+        return _llm(material=True, primary_event_type="Other")
+
+    with patch.object(materiality, "_chat_json", side_effect=fake_llm):
+        for r in releases:
+            pipeline.process_release(r, _SAMPLE_INDEX, [], counters)
+
+    assert reached == ["Ticker: CNP"]
+    assert counters["blocklisted"] == 8                  # Rosen ×7 + Robbins LLP
+    assert counters["issuer_fail"] == 1                  # AHF's clinic tagged "EV"
+
+
+def test_article_fetched_for_teasers_and_prn_issuer_credit_used():
+    page = (
+        "<html><nav>Menu</nav><div>News provided by</div>"
+        "<div><a href='/news/the-rosen-law-firm/'>THE ROSEN LAW FIRM, P. A. →</a></div>"
+        "<p>HOUSTON, Oct. 10, 2026 /PRNewswire/ -- " + _EN_BODY + "</p>"
+        "<p>SOURCE The Rosen Law Firm</p></html>"
+    ).encode()
+    release = _release(text=_EN_BODY[:300])
+    counters = pipeline._new_counters()
+    with patch("press_release.feeds.fetch_pr_url", return_value=page) as fetch, \
+         patch.object(materiality, "_chat_json") as chat:
+        assert pipeline.process_release(release, _INDEX, [], counters) is None
+    fetch.assert_called_once()
+    assert release.issuer_name == "THE ROSEN LAW FIRM, P. A."
+    assert counters["issuer_fail"] == 1                  # credit ≠ CenterPoint
+    chat.assert_not_called()
+
+
+def test_prn_issuer_credit_matching_the_company_verifies_it():
+    page = (
+        "<div>News provided by</div><div><a>CenterPoint Energy →</a></div>"
+        "<p>HOUSTON, Oct. 10, 2026 /PRNewswire/ -- " + _EN_BODY + "</p>"
+    ).encode()
+    counters = pipeline._new_counters()
+    with patch("press_release.feeds.fetch_pr_url", return_value=page), \
+         patch.object(materiality, "_chat_json", return_value=_llm(material=True, primary_event_type="Other")):
+        monkey = pytest.MonkeyPatch()
+        monkey.setenv("PR_REQUIRE_MATERIAL", "0")
+        try:
+            event = pipeline.process_release(_release(text=_EN_BODY[:300]), _INDEX, [], counters)
+        finally:
+            monkey.undo()
+    assert event is not None and event.issuer_name == "CenterPoint Energy"
+    assert counters["issuer_unverified"] == 0            # verified by the credit
