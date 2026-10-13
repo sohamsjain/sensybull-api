@@ -86,8 +86,6 @@ services:
         value: "1"   # 60 calls/min — fits beside the API's 1,200 and the cron's 1,500 under 3,000
       - key: PR_WORKERS
         value: "4"   # concurrent article-fetch + LLM passes
-      - key: PR_POLL_INTERVAL
-        value: "180" # RSS source only
       - key: PR_USER_AGENT
         sync: false  # e.g. "Mozilla/5.0 (compatible; SensybullFeedReader/1.0)"
 

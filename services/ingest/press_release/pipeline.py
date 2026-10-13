@@ -145,6 +145,14 @@ def _is_cross_wire_dup(entries: list[dict], ticker: str, fingerprints: dict) -> 
 # ---------------------------------------------------------------------------
 # Per-release processing
 # ---------------------------------------------------------------------------
+# Every release FMP lists leaves a trail in the log, law-firm spam included:
+# one "PR fetched" line when it's first seen, then exactly one outcome —
+# "PR drop … — <reason>", "Published PR", or a retry/give-up line.
+
+def _drop(counters: dict, counter: str, release, reason: str) -> None:
+    counters[counter] += 1
+    log.info("PR drop [%s] %.100s — %s", release.wire, release.headline, reason)
+
 
 def process_release(release, ticker_index: dict, fp_entries: list[dict],
                     counters: dict) -> FilingEvent | None:
@@ -161,18 +169,17 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
     language = (release.language or "").strip().lower()
     headline = release.headline.strip()
     if language and not language.startswith("en"):
-        counters["non_english"] += 1
+        _drop(counters, "non_english", release, f"non-English (wire tag {language})")
         return None
     teaser = strip_html(release.body_html or "")
     if not is_english(f"{headline}\n{teaser}"):
-        counters["non_english"] += 1
+        _drop(counters, "non_english", release, "non-English (headline + teaser)")
         return None
     # Law-firm alerts give themselves away in the headline/teaser; dropping
     # them here saves the article fetch.
     blocked = issuer_mod.is_blocklisted(headline, teaser)
     if blocked:
-        counters["blocklisted"] += 1
-        log.info("PR drop [%s] %.80s — blocklist:%s", release.wire, headline, blocked)
+        _drop(counters, "blocklisted", release, f"law-firm blocklist: {blocked!r}")
         return None
 
     body_text = fetch_release_body(release)
@@ -184,39 +191,38 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         log.info("PR article fetch failed [%s] %.80s — briefing from the teaser",
                  release.wire, headline)
     if not is_english(body_text):
-        counters["non_english"] += 1
+        _drop(counters, "non_english", release, "non-English (article text)")
         return None
 
     reason = materiality.prefilter_reason(headline, body_text)
     if reason:
-        counters["prefilter_dropped"] += 1
-        log.debug("PR drop [%s] %.80s — %s", release.wire, headline, reason)
+        _drop(counters, "prefilter_dropped", release,
+              f"{reason} ({len(headline) + len(body_text.strip())} chars)")
         return None
 
     blocked = issuer_mod.is_blocklisted(headline, body_text)
     if blocked:
-        counters["blocklisted"] += 1
-        log.info("PR drop [%s] %.80s — blocklist:%s", release.wire, headline, blocked)
+        _drop(counters, "blocklisted", release, f"law-firm blocklist: {blocked!r}")
         return None
 
     tickers = issuer_mod.extract_tickers(headline, body_text, release.metadata_tickers)
     if not tickers:
-        counters["no_ticker"] += 1
+        _drop(counters, "no_ticker", release, "no US ticker in the tag or the text")
         return None
 
     company, match_kind = issuer_mod.resolve_issuer(
         ticker_index, tickers, release.issuer_name, headline, body_text
     )
     if company is None:
-        counters["issuer_fail"] += 1
-        log.info("PR drop [%s] %.80s — issuer unresolved (tickers=%s)",
-                 release.wire, headline, tickers)
+        known = [t for t in tickers if t in ticker_index]
+        _drop(counters, "issuer_fail", release,
+              f"issuer doesn't match tickers {tickers} (issuer field {release.issuer_name!r})"
+              if known else f"tickers {tickers} not in the SEC ticker map")
         return None
     if match_kind == "unverified":
         if not issuer_mod.names_company(company["norm_name"], headline, body_text):
-            counters["issuer_fail"] += 1
-            log.info("PR drop [%s] %.80s — %s never named (tag without issuer)",
-                     release.wire, headline, company["ticker"])
+            _drop(counters, "issuer_fail", release,
+                  f"tagged {company['ticker']} but never names {company['name']!r}")
             return None
         counters["issuer_unverified"] += 1
         log.info("PR pass-through with unverified issuer [%s] %.80s ticker=%s",
@@ -224,8 +230,8 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 
     fingerprints = build_fingerprints(headline, body_text)
     if _is_cross_wire_dup(fp_entries, company["ticker"], fingerprints):
-        counters["cross_wire_dup"] += 1
-        log.info("PR drop [%s] %.80s — cross-wire duplicate", release.wire, headline)
+        _drop(counters, "cross_wire_dup", release,
+              f"cross-wire duplicate of an earlier {company['ticker']} release")
         return None
 
     published_iso = _iso_published(release.published)
@@ -234,8 +240,7 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         headline, body_text, company["name"], company["ticker"], published_iso
     )
     if isinstance(result, materiality.Drop):
-        counters["llm_dropped"] += 1
-        log.info("PR drop [%s] %.80s — %s", release.wire, headline, result.reason)
+        _drop(counters, "llm_dropped", release, f"LLM: {result.reason}")
         return None
 
     briefing = result
@@ -580,7 +585,16 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                 await asyncio.sleep(delay)
                 continue
 
-            releases, other_wire = fmp.parse_fmp_rows(rows)
+            skipped: list[dict] = []
+            releases, other_wire = fmp.parse_fmp_rows(rows, skipped)
+            for row in reversed(skipped):               # other wires: logged once
+                key = f"fmp:{(row.get('url') or '').strip()}"
+                if key in seen:
+                    continue
+                log.info("PR fetched [%s] %s %.100s — skipped: %s isn't an ingested wire",
+                         row.get("site") or "?", (row.get("symbol") or "-"),
+                         row.get("title") or "", row.get("publisher") or "this source")
+                mark_seen(key)
             now = time.monotonic()
             for release in reversed(releases):          # oldest first
                 key = f"fmp:{release.guid}"
@@ -591,19 +605,21 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                 retry_at.pop(key, None)
                 if key not in first_seen:
                     age = _age_minutes(release.published)
+                    log.info("PR fetched [%s] %s %.100s — %s old %s",
+                             release.wire, ",".join(release.metadata_tickers) or "-",
+                             release.headline,
+                             f"{age:.0f}m" if age is not None else "?", release.url)
                     limit = max_late if baselined else max_age
                     if age is not None and age > limit:
                         counters["stale"] += 1
                         mark_seen(key)
-                        if baselined:
-                            log.info("PR stale [%s] %.80s — %.0fm old when FMP listed it",
-                                     release.wire, release.headline, age)
+                        log.info("PR drop [%s] %.100s — %s (%.0fm old, limit %dm)",
+                                 release.wire, release.headline,
+                                 "late listing" if baselined else "backlog at start",
+                                 age, limit)
                         continue
                     first_seen[key] = time.time()
                     counters["fetched"] += 1
-                    if baselined and age is not None and age > max_age:
-                        log.info("PR listed late by FMP [%s] %.80s — %.0fm after the wire",
-                                 release.wire, release.headline, age)
                 in_flight.add(key)
                 queue.put_nowait(release)
             baselined = True

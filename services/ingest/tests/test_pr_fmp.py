@@ -347,6 +347,29 @@ def test_loop_other_errors_still_give_up(monkeypatch, tmp_path):
     assert len(calls) == 1
 
 
+def test_loop_logs_every_row_it_fetches(monkeypatch, tmp_path, caplog):
+    """Law-firm spam and other wires included: each row FMP lists gets a
+    "PR fetched" line and an outcome line."""
+    import logging
+    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
+    law = _row(url="https://www.prnewswire.com/law.html", publishedDate=_fresh(),
+               title="CNP Investors Have Opportunity to Lead Securities Fraud Lawsuit",
+               text="Rosen Law Firm reminds purchasers of CenterPoint Energy (NYSE: CNP) "
+                    "of the lead plaintiff deadline.")
+    newsfile = _row(url="https://www.newsfilecorp.com/x", publishedDate=_fresh(),
+                    publisher="Newsfile Corp", site="newsfilecorp.com",
+                    title="Kaplan Fox Reminds Innventure Investors")
+    real = pipeline.process_release
+    with caplog.at_level(logging.INFO, logger="press_release.pipeline"):
+        _run_loop(monkeypatch, tmp_path, [newsfile, law], real)
+    lines = [r.getMessage() for r in caplog.records]
+    fetched = [m for m in lines if m.startswith("PR fetched")]
+    assert len(fetched) == 2                     # once each, across several polls
+    assert any("Kaplan Fox" in m and "isn't an ingested wire" in m for m in fetched)
+    assert any(m.startswith("PR drop") and "Securities Fraud" in m and "blocklist" in m
+               for m in lines)
+
+
 def test_telegraphic_headline_and_teaser_are_english():
     """Oct 13 2026: BIO-key's headline + one-line teaser scored as foreign."""
     assert is_english(
