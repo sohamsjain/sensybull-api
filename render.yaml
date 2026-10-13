@@ -73,6 +73,8 @@ services:
           property: connectionString
       - key: GROQ_API_KEYS
         sync: false  # comma-separated Groq keys
+      - key: LOG_LEVEL
+        value: INFO  # DEBUG adds our own debug lines; Groq/httpx stay quiet either way
       - key: SEC_USER_AGENT
         sync: false
       # ── Press-release ingestion (see services/ingest/press_release/) ──
