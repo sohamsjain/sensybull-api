@@ -31,11 +31,14 @@ _SUFFIX_TOKENS = {
 
 _FUZZY_RATIO_THRESHOLD = 0.85
 
-# Exchange-qualified ticker mentions, e.g. "(NYSE: MU)" or "Nasdaq – ABCD".
+# Exchange-qualified ticker mentions, e.g. "(NYSE: MU)", "Nasdaq – ABCD" or
+# "(NASDAQ/TASE: TSEM)".
 # Deliberately US-listed exchanges only: the SEC ticker map (and the rest of
 # the product) covers US listings, so OTC/TSX/foreign mentions don't resolve.
 _TICKER_RE = re.compile(
     r"\b(NYSE American|NYSE MKT|NYSE|NASDAQ|Nasdaq|AMEX|CBOE)"
+    # Dual listings name both exchanges: "(NASDAQ/TASE: TSEM)"
+    r"(?:\s*/\s*[A-Z]{2,6})?"
     r"\s*[:–—-]\s*"
     r"([A-Z]{1,5}(?:\.[A-Z])?)\b"
 )

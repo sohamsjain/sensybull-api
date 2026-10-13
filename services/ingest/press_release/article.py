@@ -50,15 +50,46 @@ def extract_issuer(page_html: str) -> str:
     return m.group(1).strip().rstrip("→ ").strip()
 
 
-def extract_release_text(page_html: str) -> str:
+# A headline-anchored span shorter than this is page chrome, not a release
+_MIN_ANCHORED_CHARS = 300
+
+
+def _after_headline(text: str, headline: str) -> int:
+    """Offset just past the last place the page prints the release's own
+    headline with a release-length span after it, or -1. The last one:
+    <title> and share widgets repeat the headline above the article."""
+    probe = " ".join(headline.split())[:60].lower()
+    if len(probe) < 15:
+        return -1
+    flat = text.lower()
+    best, pos = -1, flat.find(probe)
+    while pos != -1:
+        line_end = flat.find("\n", pos)
+        start = len(flat) if line_end == -1 else line_end + 1
+        if len(flat) - start >= _MIN_ANCHORED_CHARS:
+            best = start
+        pos = flat.find(probe, pos + 1)
+    return best
+
+
+def extract_release_text(page_html: str, headline: str = "") -> str:
     """Plain text of the release on an article page, or "" when the page
-    carries no recognisable dateline (caller keeps its inline body)."""
+    carries neither a recognisable dateline nor the release's headline
+    (caller keeps its inline body).
+
+    The dateline marker is the reliable anchor; some releases don't print
+    one (foreign issuers on GlobeNewswire often open "CITY – Oct. 13, 2026
+    –" with no "(GLOBE NEWSWIRE)"), so the text after the release's own
+    headline is the fallback."""
     text = strip_html(page_html)
     m = _DATELINE_RE.search(text)
-    if not m:
-        return ""
-    # The dateline's city starts the line the marker sits on
-    start = text.rfind("\n", 0, m.start()) + 1
+    if m:
+        # The dateline's city starts the line the marker sits on
+        start = text.rfind("\n", 0, m.start()) + 1
+    else:
+        start = _after_headline(text, headline) if headline else -1
+        if start < 0:
+            return ""
     body = text[start:]
     end = _FOOTER_RE.search(body)
     if end:
