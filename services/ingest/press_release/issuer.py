@@ -152,14 +152,19 @@ def build_ticker_index(ticker_map: dict[str, dict]) -> dict[str, dict]:
     """
     index: dict[str, dict] = {}
     for padded_cik, info in ticker_map.items():
-        ticker = (info.get("ticker") or "").upper()
-        if not ticker:
-            continue
-        index[ticker] = {
+        entry = {
             "cik": padded_cik,
             "name": info.get("name", ""),
             "norm_name": normalize_company_name(info.get("name", "")),
         }
+        # Every symbol the CIK trades under (common, preferreds, warrants);
+        # the first is the common stock and is never overwritten by a later
+        # CIK's preferred that happens to share it.
+        symbols = info.get("tickers") or [info.get("ticker") or ""]
+        for i, ticker in enumerate(symbols):
+            ticker = (ticker or "").upper()
+            if ticker and (i == 0 or ticker not in index):
+                index[ticker] = entry
     return index
 
 

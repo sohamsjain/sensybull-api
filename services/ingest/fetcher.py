@@ -267,16 +267,29 @@ def fetch_exhibit_text(url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def load_ticker_map() -> dict[str, dict]:
-    """Returns {padded_cik: {ticker, name}}. Empty dict on failure."""
+    """Returns {padded_cik: {ticker, name, tickers}}. Empty dict on failure.
+
+    SEC's file lists one entry per security, so a CIK with preferreds or
+    warrants appears several times (Wells Fargo: WFC, then WFC-PA, WFC-PC,
+    …), ranked with the common stock first. `ticker` is that first entry;
+    `tickers` keeps every symbol so a press release naming any of them
+    resolves. Keeping the last entry instead labelled Wells Fargo WFC-PA
+    and left WFC out of the press-release index (Oct 2026)."""
     try:
         raw = json.loads(fetch_url(TICKERS_URL).decode("utf-8", errors="replace"))
         result: dict[str, dict] = {}
         for entry in raw.values():
             padded_cik = str(entry["cik_str"]).zfill(10)
-            result[padded_cik] = {
-                "ticker": entry.get("ticker", ""),
-                "name":   entry.get("title", ""),
-            }
+            ticker = entry.get("ticker", "")
+            info = result.get(padded_cik)
+            if info is None:
+                result[padded_cik] = {
+                    "ticker": ticker,
+                    "name":   entry.get("title", ""),
+                    "tickers": [ticker] if ticker else [],
+                }
+            elif ticker and ticker not in info["tickers"]:
+                info["tickers"].append(ticker)
         return result
     except Exception:
         return {}

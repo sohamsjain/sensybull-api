@@ -52,8 +52,10 @@ _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 # Below this many words the ratio is noise
 _MIN_WORDS = 20
 _MIN_FUNCTION_RATIO = 0.10
-# Below this many words a low English ratio needs foreign evidence too
-_SHORT_TEXT_WORDS = 60
+# Below this many words a low English ratio needs foreign evidence too.
+# Covers a headline + FMP teaser (First Atlantic Nickel's, Oct 13 2026: 72
+# words, 5 function words, no foreign ones); article bodies run to hundreds.
+_SHORT_TEXT_WORDS = 150
 _MAX_NON_LATIN_SHARE = 0.30
 
 

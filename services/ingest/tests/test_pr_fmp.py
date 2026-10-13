@@ -18,6 +18,8 @@ def _offline(monkeypatch):
     def fail(*a, **kw):
         raise OSError("offline")
     monkeypatch.setattr("press_release.feeds.fetch_pr_url", fail)
+    monkeypatch.setattr("press_release.feeds._host_failures", {})
+    monkeypatch.setattr("press_release.feeds._host_skip_until", {})
 
 
 _EN_BODY = (
@@ -440,6 +442,39 @@ def test_lag_not_reported_for_rows_listed_before_start(monkeypatch, tmp_path, ca
     assert "wire→fmp=n/a(listed before start)" in published[0]
 
 
+def test_wells_fargo_keeps_its_common_ticker(monkeypatch):
+    """Oct 13 2026: SEC lists WFC first, then its preferreds; keeping the
+    last entry labelled Wells Fargo WFC-PA and lost WFC from the index."""
+    import json
+    import fetcher
+    raw = {"0": {"cik_str": 72971, "ticker": "WFC", "title": "WELLS FARGO & COMPANY/MN"},
+           "1": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
+           "2": {"cik_str": 72971, "ticker": "WFC-PY", "title": "WELLS FARGO & COMPANY/MN"},
+           "3": {"cik_str": 72971, "ticker": "WFC-PA", "title": "WELLS FARGO & COMPANY/MN"}}
+    monkeypatch.setattr(fetcher, "fetch_url", lambda url: json.dumps(raw).encode())
+    cik_map = fetcher.load_ticker_map()
+    assert cik_map["0000072971"]["ticker"] == "WFC"
+    index = build_ticker_index(cik_map)
+    assert index["WFC"]["cik"] == index["WFC-PA"]["cik"] == "0000072971"
+    assert index["AAPL"]["cik"] == "0000320193"
+
+
+def test_failing_wire_host_is_skipped_after_repeated_failures(monkeypatch):
+    from press_release import feeds
+    calls = []
+
+    def timeout(*a, **kw):
+        calls.append(a[0])
+        raise TimeoutError("The read operation timed out")
+    monkeypatch.setattr(feeds, "fetch_pr_url", timeout)
+    for i in range(feeds._HOST_FAILURE_LIMIT + 2):
+        r = _release(url=f"https://www.businesswire.com/news/home/{i}/en/x",
+                     publisher="Business Wire", site="businesswire.com")
+        feeds.fetch_release_body(r)
+    assert len(calls) == feeds._HOST_FAILURE_LIMIT     # then skipped
+    assert "skipped" in r.fetch_error
+
+
 def test_telegraphic_headline_and_teaser_are_english():
     """Oct 13 2026: BIO-key's headline + one-line teaser scored as foreign."""
     assert is_english(
@@ -447,6 +482,17 @@ def test_telegraphic_headline_and_teaser_are_english():
         "Regional Footprint\nBIO-key (BKYI) Adds New Middle East Government Security "
         "Agency, Expands Regional Footprint, Supports National Digital Transformation "
         "& Cybersecurity goals.")
+
+
+def test_long_telegraphic_headline_and_teaser_are_english():
+    """Oct 13 2026: First Atlantic Nickel's 72-word headline + teaser."""
+    assert is_english(
+        "First Atlantic Nickel & Cobalt Drills First Discovery Hole at Alloy Max South Zone "
+        "with Drill Hole XL-26-18: Best Near-Surface Visible Awaruite to Date at Alloy Max, "
+        "Ending in Open Mineralization; XL-26-17 Extends Alloy Max North; Drilling Now Spans "
+        "2.4 km of Strike and 1 km of Width at Alloy Max\nFirst Atlantic discovers Alloy Max "
+        "South Zone at Pipestone XL: XL-26-18 hits visible awaruite near surface, ending "
+        "open; XL-26-17 extends Alloy Max North.")
 
 
 def test_short_translated_teaser_still_not_english():
