@@ -484,6 +484,17 @@ def test_telegraphic_headline_and_teaser_are_english():
         "& Cybersecurity goals.")
 
 
+def test_long_telegraphic_headline_and_teaser_are_english():
+    """Oct 13 2026: First Atlantic Nickel's 72-word headline + teaser."""
+    assert is_english(
+        "First Atlantic Nickel & Cobalt Drills First Discovery Hole at Alloy Max South Zone "
+        "with Drill Hole XL-26-18: Best Near-Surface Visible Awaruite to Date at Alloy Max, "
+        "Ending in Open Mineralization; XL-26-17 Extends Alloy Max North; Drilling Now Spans "
+        "2.4 km of Strike and 1 km of Width at Alloy Max\nFirst Atlantic discovers Alloy Max "
+        "South Zone at Pipestone XL: XL-26-18 hits visible awaruite near surface, ending "
+        "open; XL-26-17 extends Alloy Max North.")
+
+
 def test_short_translated_teaser_still_not_english():
     assert not is_english(
         "Persistent sichert sich eine starke Mehrheitsbeteiligung\nBei Ablauf der "
