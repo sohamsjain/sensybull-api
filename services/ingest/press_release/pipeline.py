@@ -149,6 +149,12 @@ def _is_cross_wire_dup(entries: list[dict], ticker: str, fingerprints: dict) -> 
 # one "PR fetched" line when it's first seen, then exactly one outcome —
 # "PR drop … — <reason>", "Published PR", or a retry/give-up line.
 
+class ArticleUnavailable(RuntimeError):
+    """The release can't be judged on FMP's teaser alone and the article
+    page didn't load. Raised rather than dropped so the loop retries it —
+    a wire timeout or a transient block shouldn't lose the release."""
+
+
 def _drop(counters: dict, counter: str, release, reason: str) -> None:
     counters[counter] += 1
     log.info("PR drop [%s] %.100s — %s", release.wire, release.headline, reason)
@@ -221,6 +227,13 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         return None
     if match_kind == "unverified":
         if not issuer_mod.names_company(company["norm_name"], headline, body_text):
+            if release.body_is_teaser and not release.body_from_article:
+                # The teaser is cut off before the issuer is named (Business
+                # Wire's often are): only the article can verify the tag.
+                raise ArticleUnavailable(
+                    f"tagged {company['ticker']}, the teaser doesn't name "
+                    f"{company['name']!r} and the article didn't load "
+                    f"({release.fetch_error or 'no release text on the page'})")
             _drop(counters, "issuer_fail", release,
                   f"tagged {company['ticker']} but never names {company['name']!r}")
             return None
@@ -304,7 +317,7 @@ def _new_counters() -> dict:
         "blocklisted": 0, "no_ticker": 0, "issuer_fail": 0,
         "issuer_unverified": 0, "cross_wire_dup": 0, "llm_calls": 0,
         "llm_dropped": 0, "llm_failed": 0, "rate_limited": 0,
-        "published": 0, "stale": 0, "teaser_only": 0,
+        "published": 0, "stale": 0, "teaser_only": 0, "article_retry": 0,
     }
 
 
@@ -523,12 +536,14 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                         log.info("PR rate-limited, will retry (%s) %.80s",
                                  key, release.headline)
                 else:
-                    counters["llm_failed"] += 1
+                    counters["article_retry" if isinstance(exc, ArticleUnavailable)
+                             else "llm_failed"] += 1
                     n = attempts.get(key, 0) + 1
                     if n >= _MAX_LLM_ATTEMPTS:
                         mark_seen(key)
                         attempts.pop(key, None)
-                        log.warning("PR giving up after %d attempts (%s): %s", n, key, exc)
+                        log.warning("PR drop [%s] %.100s — giving up after %d attempts: %s",
+                                    release.wire, release.headline, n, exc)
                     else:
                         attempts[key] = n
                         retry_at[key] = time.monotonic() + 30 * n

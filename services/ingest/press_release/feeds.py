@@ -73,6 +73,7 @@ class PRRelease:
     # Set by fetch_release_body when the text came from the article page
     # rather than the inline body/teaser.
     body_from_article: bool = False
+    fetch_error: str = ""               # why the article fetch failed, if it did
 
 
 @dataclass
@@ -96,8 +97,13 @@ class WireConfig:
 _validators: dict[str, dict[str, str]] = {}
 
 
+# Article pages are HTML for readers; asking for them with the feed's
+# RSS Accept header is the kind of mismatch a wire's bot filter rejects.
+_HTML_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+
 def fetch_pr_url(url: str, retries: int = 3, conditional: bool = False,
-                 timeout: float = _DEFAULT_TIMEOUT) -> bytes | None:
+                 timeout: float = _DEFAULT_TIMEOUT, html: bool = False) -> bytes | None:
     """Fetch a URL with retries/backoff.
 
     With conditional=True, sends stored ETag/Last-Modified and returns None
@@ -106,8 +112,10 @@ def fetch_pr_url(url: str, retries: int = 3, conditional: bool = False,
     headers = {
         "User-Agent": _user_agent(),
         "Accept-Encoding": "gzip",
-        "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+        "Accept": _HTML_ACCEPT if html else "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
     }
+    if html:
+        headers["Accept-Language"] = "en-US,en;q=0.9"
     if conditional:
         v = _validators.get(url, {})
         if v.get("etag"):
@@ -221,7 +229,7 @@ def fetch_release_body(release: PRRelease) -> str:
     if not thin or not release.url:
         return inline
     try:
-        raw = fetch_pr_url(release.url, retries=2, timeout=_ARTICLE_TIMEOUT)
+        raw = fetch_pr_url(release.url, retries=2, timeout=_ARTICLE_TIMEOUT, html=True)
         if raw:
             page = raw.decode("utf-8", errors="replace")
             if not release.issuer_name:
@@ -235,6 +243,7 @@ def fetch_release_body(release: PRRelease) -> str:
         # INFO, not DEBUG: a wire that 403s or times out silently turns
         # every release from it into a teaser, which is worth seeing.
         log.info("Article fetch failed (%s): %s", release.url, exc)
+        release.fetch_error = str(exc)
     return inline
 
 

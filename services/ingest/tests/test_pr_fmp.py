@@ -370,6 +370,48 @@ def test_loop_logs_every_row_it_fetches(monkeypatch, tmp_path, caplog):
                for m in lines)
 
 
+def test_cut_off_teaser_is_retried_not_dropped_when_the_article_fails():
+    """Oct 13 2026: ISG's Business Wire release, tagged III, whose teaser
+    ends before naming the company and whose article page didn't load."""
+    index = build_ticker_index({"0001371489": {"ticker": "III",
+                                              "name": "Information Services Group Inc."}})
+    release = _release(
+        symbol="III", publisher="Business Wire", site="businesswire.com",
+        url="https://www.businesswire.com/news/home/20261013/en/isg",
+        title="European Automotive, Mobility Firms Expand AI in Operations",
+        text="LONDON--(BUSINESS WIRE)--Automotive and mobility enterprises across Europe "
+             "are moving AI from experimental use cases into operations while modernizing "
+             "engineering and manufacturing, according to a new research report.")
+    counters = pipeline._new_counters()
+    with patch.object(materiality, "_chat_json") as chat, \
+            pytest.raises(pipeline.ArticleUnavailable, match="offline"):
+        pipeline.process_release(release, index, [], counters)
+    chat.assert_not_called()
+    assert counters["issuer_fail"] == 0
+
+
+def test_cut_off_teaser_passes_once_the_article_loads():
+    index = build_ticker_index({"0001371489": {"ticker": "III",
+                                              "name": "Information Services Group Inc."}})
+    page = ("<html><body><p>LONDON--(BUSINESS WIRE)--Automotive and mobility enterprises "
+            "across Europe are moving AI from experimental use cases into operations, "
+            "according to a new research report published today by Information Services "
+            "Group (ISG) (Nasdaq: III), a global AI-centered technology research and "
+            "advisory firm. The report finds enterprises are integrating digital "
+            "capabilities across the vehicle lifecycle.</p></body></html>").encode()
+    release = _release(
+        symbol="III", publisher="Business Wire", site="businesswire.com",
+        url="https://www.businesswire.com/news/home/20261013/en/isg",
+        title="European Automotive, Mobility Firms Expand AI in Operations",
+        text="LONDON--(BUSINESS WIRE)--Automotive and mobility enterprises across Europe.")
+    counters = pipeline._new_counters()
+    with patch("press_release.feeds.fetch_pr_url", return_value=page) as fetch, \
+            patch.object(materiality, "_chat_json", return_value=_llm()):
+        event = pipeline.process_release(release, index, [], counters)
+    assert event is not None and event.ticker == "III"
+    assert fetch.call_args.kwargs["html"] is True
+
+
 def test_telegraphic_headline_and_teaser_are_english():
     """Oct 13 2026: BIO-key's headline + one-line teaser scored as foreign."""
     assert is_english(
@@ -444,13 +486,19 @@ def test_sample_only_the_company_release_reaches_the_llm(fixture_text):
         reached.append(messages[1]["content"].split("\n", 2)[1])   # "Ticker: X"
         return _llm()
 
+    retried = []
     with patch.object(materiality, "_chat_json", side_effect=fake_llm):
         for r in releases:
-            pipeline.process_release(r, _SAMPLE_INDEX, [], counters)
+            try:
+                pipeline.process_release(r, _SAMPLE_INDEX, [], counters)
+            except pipeline.ArticleUnavailable:
+                retried.append(r.metadata_tickers)
 
     assert reached == ["Ticker: CNP"]
     assert counters["blocklisted"] == 8                  # Rosen ×7 + Robbins LLP
-    assert counters["issuer_fail"] == 1                  # AHF's clinic tagged "EV"
+    # AHF's clinic tagged "EV": its teaser can't verify the tag and the
+    # article is offline here, so it waits for the article instead of the LLM
+    assert retried == [["EV"]]
 
 
 def test_article_fetched_for_teasers_and_prn_issuer_credit_used():
