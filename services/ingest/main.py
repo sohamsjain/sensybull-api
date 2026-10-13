@@ -5,8 +5,7 @@ The 8-K loop polls SEC EDGAR for new 8-K filings (the only ingested form
 family after the July 2026 multi-form rollback), extracts Item sections,
 generates LLM briefings, and publishes events to Redis.
 
-The press-release loop (press_release/pipeline.py, off unless
-PR_INGEST_ENABLED=1) polls FMP's aggregated press-release endpoint (or,
+The press-release loop (press_release/pipeline.py) polls FMP's aggregated press-release endpoint (or,
 with PR_SOURCE=rss, the newswire RSS feeds) and publishes first-party
 announcements through the same Redis contract. Both loops run
 in this one worker, each under a crash-restart supervisor.
@@ -32,7 +31,7 @@ from forms import ALLOWED_FORMS
 from parser import build_filing, strip_html
 from press_release.fingerprint import build_fingerprints
 from press_release.issuer import build_ticker_index
-from press_release.pipeline import fmp_poll_loop, pr_ingest_enabled, pr_poll_loop, pr_source
+from press_release.pipeline import fmp_poll_loop, pr_poll_loop, pr_source
 from publisher import publish_filing
 from seen import load_seen, save_seen
 
@@ -267,16 +266,12 @@ async def main() -> None:
     if not tickers.cik_map:
         log.warning("Initial ticker map load failed — refresh loop will retry")
 
+    pr_loop = fmp_poll_loop if pr_source() == "fmp" else pr_poll_loop
     tasks = [
         _supervise("ticker-refresh", lambda: ticker_refresh_loop(tickers)),
         _supervise("edgar", lambda: poll_loop(tickers)),
+        _supervise("press-release", lambda: pr_loop(lambda: tickers.ticker_index)),
     ]
-    if pr_ingest_enabled():
-        pr_loop = fmp_poll_loop if pr_source() == "fmp" else pr_poll_loop
-        tasks.append(_supervise("press-release",
-                                lambda: pr_loop(lambda: tickers.ticker_index)))
-    else:
-        log.info("Press-release ingest disabled (set PR_INGEST_ENABLED=1 to enable)")
 
     await asyncio.gather(*tasks)
 

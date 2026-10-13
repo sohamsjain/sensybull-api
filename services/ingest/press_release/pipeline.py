@@ -67,20 +67,10 @@ def _poll_interval() -> int:
         return 180
 
 
-def pr_ingest_enabled() -> bool:
-    return os.environ.get("PR_INGEST_ENABLED", "").strip() in ("1", "true", "yes")
-
-
 def pr_source() -> str:
     """"fmp" (default): FMP's aggregated press-release endpoint. "rss": the
     original per-wire RSS adapters (GlobeNewswire + PR Newswire only)."""
     return os.environ.get("PR_SOURCE", "fmp").strip().lower() or "fmp"
-
-
-def _dry_run() -> bool:
-    """PR_DRY_RUN=1 runs every gate (LLM included) and logs what would
-    publish, without publishing."""
-    return os.environ.get("PR_DRY_RUN", "").strip() in ("1", "true", "yes")
 
 
 def _env_float(name: str, default: float, minimum: float) -> float:
@@ -291,14 +281,8 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 # ---------------------------------------------------------------------------
 
 def _publish(event: FilingEvent, fp_entries: list[dict], counters: dict) -> None:
-    """Publish (or, in dry-run, log) an event and remember its fingerprints
-    for cross-wire dedup."""
-    if _dry_run():
-        log.info("PR DRY RUN would publish: [%s] %s ticker=%s tier=%d types=%s",
-                 event.source, event.briefing.headline, event.ticker,
-                 event.max_tier, event.event_types)
-    else:
-        publish_filing(event.to_json())
+    """Publish an event and remember its fingerprints for cross-wire dedup."""
+    publish_filing(event.to_json())
     counters["published"] += 1
     fp_entries.append({
         "ticker": event.ticker,
@@ -573,9 +557,8 @@ async def fmp_poll_loop(get_ticker_index) -> None:
 
     worker_tasks = [asyncio.create_task(worker()) for _ in range(workers)]
     log.info("PR ingest enabled: FMP every %.2fs, %d worker(s), max age %dm "
-             "(late listings %dm), seen=%d%s",
-             poll_every, workers, max_age, max_late, len(seen),
-             " [DRY RUN]" if _dry_run() else "")
+             "(late listings %dm), seen=%d",
+             poll_every, workers, max_age, max_late, len(seen))
 
     backoff_step = 0
     baselined = False

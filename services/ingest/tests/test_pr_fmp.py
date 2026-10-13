@@ -227,7 +227,6 @@ def _run_loop(monkeypatch, tmp_path, rows, process, seconds=0.6):
     monkeypatch.setattr(pipeline, "PR_SEEN_FILE", str(tmp_path / "seen.json"))
     monkeypatch.setattr(pipeline, "FINGERPRINT_FILE", str(tmp_path / "fp.json"))
     monkeypatch.setenv("PR_FMP_POLL_SECONDS", "0.25")
-    monkeypatch.delenv("PR_DRY_RUN", raising=False)
     published = []
     monkeypatch.setattr(pipeline.fmp, "fetch_latest", rows if callable(rows) else lambda: rows)
     monkeypatch.setattr(pipeline, "process_release", process)
@@ -382,21 +381,6 @@ def test_short_teaser_reaches_the_llm_when_the_article_fetch_fails():
         assert pipeline.process_release(release, _INDEX, [], counters) is not None
     chat.assert_called_once()
     assert counters["teaser_only"] == 1
-
-
-def test_loop_dry_run_does_not_publish(monkeypatch, tmp_path):
-    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
-
-    def process(release, *a):
-        from events import FilingEvent, FilingEventBriefing
-        return FilingEvent(
-            edgar_id="pr:x", signal_type="PR", cik="1", ticker="CNP", company_name="C",
-            filing_date="", edgar_url="", accession_number="", max_tier=2,
-            briefing=FilingEventBriefing("h", "", "Other", "Low", "Neutral", ""),
-        )
-
-    monkeypatch.setattr(pipeline, "_dry_run", lambda: True)
-    assert _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh())], process) == []
 
 
 # ── the live FMP sample (Oct 10 2026) ─────────────────────────────────────
