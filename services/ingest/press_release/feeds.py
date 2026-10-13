@@ -234,7 +234,7 @@ def fetch_release_body(release: PRRelease) -> str:
             page = raw.decode("utf-8", errors="replace")
             if not release.issuer_name:
                 release.issuer_name = extract_issuer(page)
-            extracted = extract_release_text(page)
+            extracted = extract_release_text(page, release.headline)
             if len(extracted) > len(inline):
                 release.body_from_article = True
                 return extracted

@@ -412,6 +412,34 @@ def test_cut_off_teaser_passes_once_the_article_loads():
     assert fetch.call_args.kwargs["html"] is True
 
 
+def test_release_without_a_wire_dateline_is_found_by_its_headline():
+    """Oct 13 2026: Tower Semiconductor's GlobeNewswire page prints no
+    "(GLOBE NEWSWIRE)" marker; the article text was discarded."""
+    headline = "Tower Semiconductor Announces Third Quarter 2026 Financial Results and Conference Call"
+    body = ("MIGDAL HAEMEK, Israel – October 13, 2026 – Tower Semiconductor (NASDAQ/TASE: TSEM), "
+            "the leading foundry of high-value analog semiconductor solutions, will issue its "
+            "third quarter 2026 earnings release on Monday, November 2, 2026. ") * 3
+    page = (f"<html><head><title>{headline}</title></head><body><nav>Newsroom</nav>"
+            f"<div>Share {headline}</div><h1>{headline}</h1><p>{body}</p>"
+            "<p>Tags: semiconductors</p><footer>Related news</footer></body></html>")
+    text = extract_release_text(page, headline)
+    assert text.startswith("MIGDAL HAEMEK")
+    assert "Related news" not in text
+    assert extract_release_text(page) == ""          # no headline, no anchor
+    assert extract_tickers(headline, text) == ["TSEM"]
+
+
+def test_lag_not_reported_for_rows_listed_before_start(monkeypatch, tmp_path, caplog):
+    import logging
+    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
+    with caplog.at_level(logging.INFO, logger="press_release.pipeline"):
+        _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh(minutes_ago=20))],
+                  lambda r, *a: _event_for(r))
+    published = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Published PR")]
+    assert len(published) == 1
+    assert "wire→fmp=n/a(listed before start)" in published[0]
+
+
 def test_telegraphic_headline_and_teaser_are_english():
     """Oct 13 2026: BIO-key's headline + one-line teaser scored as foreign."""
     assert is_english(

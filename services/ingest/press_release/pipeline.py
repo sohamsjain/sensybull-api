@@ -496,12 +496,16 @@ async def fmp_poll_loop(get_ticker_index) -> None:
     attempts: dict[str, int] = {}
     retry_at: dict[str, float] = {}
     first_seen: dict[str, float] = {}       # key → wall time first listed
+    # Keys already on FMP's list at our first poll: when FMP listed them is
+    # unknown, so their wire→fmp lag isn't reported.
+    listed_before_start: set[str] = set()
     counters = _new_counters()
     state = {"dirty": False, "paused_until": 0.0}
 
     def mark_seen(key: str) -> None:
         seen[key] = datetime.now(timezone.utc).isoformat()
         first_seen.pop(key, None)
+        listed_before_start.discard(key)
         state["dirty"] = True
 
     def held_minutes(key: str) -> float:
@@ -555,7 +559,12 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                     listed = first_seen.get(key, time.time())
                     age = _age_minutes(release.published)
                     wire_to_fmp = (age * 60 - (time.time() - listed)) if age is not None else None
-                    event_lag = (f"wire→fmp={wire_to_fmp:.0f}s " if wire_to_fmp is not None else "")
+                    if key in listed_before_start:
+                        event_lag = "wire→fmp=n/a(listed before start) "
+                    elif wire_to_fmp is not None:
+                        event_lag = f"wire→fmp={wire_to_fmp:.0f}s "
+                    else:
+                        event_lag = ""
                     event_lag += f"fmp→publish={time.time() - listed:.0f}s"
                 else:
                     event_lag = ""
@@ -634,6 +643,8 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                                  age, limit)
                         continue
                     first_seen[key] = time.time()
+                    if not baselined:
+                        listed_before_start.add(key)
                     counters["fetched"] += 1
                 in_flight.add(key)
                 queue.put_nowait(release)
