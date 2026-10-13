@@ -229,7 +229,7 @@ def _run_loop(monkeypatch, tmp_path, rows, process, seconds=0.6):
     monkeypatch.setenv("PR_FMP_POLL_SECONDS", "0.25")
     monkeypatch.delenv("PR_DRY_RUN", raising=False)
     published = []
-    monkeypatch.setattr(pipeline.fmp, "fetch_latest", lambda: rows)
+    monkeypatch.setattr(pipeline.fmp, "fetch_latest", rows if callable(rows) else lambda: rows)
     monkeypatch.setattr(pipeline, "process_release", process)
     monkeypatch.setattr(pipeline, "publish_filing", published.append)
 
@@ -273,6 +273,95 @@ def test_loop_skips_stale_releases(monkeypatch, tmp_path):
     published = _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh(minutes_ago=600))],
                           lambda r, *a: calls.append(r) or None)
     assert calls == [] and published == []
+
+
+def _event_for(release):
+    from events import FilingEvent, FilingEventBriefing
+    return FilingEvent(
+        edgar_id=f"pr:{release.wire}:{release.guid}", signal_type="PR", cik="1",
+        ticker="CNP", company_name="C", filing_date=release.published,
+        edgar_url=release.url, accession_number="", max_tier=2, source=release.wire,
+        briefing=FilingEventBriefing(release.headline, "", "Other", "Low", "Neutral", ""),
+    )
+
+
+def test_loop_publishes_a_release_fmp_lists_late(monkeypatch, tmp_path):
+    """After the first poll, a row new to FMP's list is news even when its
+    publishedDate is past PR_MAX_AGE_MINUTES — FMP lists some releases
+    long after the wire time."""
+    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
+    first = _row(publishedDate=_fresh())
+    late = _row(url="https://www.prnewswire.com/late.html", publishedDate=_fresh(minutes_ago=45))
+    polls = {"n": 0}
+
+    def rows():
+        polls["n"] += 1
+        return [first] if polls["n"] == 1 else [first, late]
+
+    calls = []
+    published = _run_loop(monkeypatch, tmp_path, rows,
+                          lambda r, *a: calls.append(r.url) or _event_for(r))
+    assert calls == [first["url"], late["url"]]
+    assert len(published) == 2
+
+
+def test_loop_baseline_still_skips_backlog_on_start(monkeypatch, tmp_path):
+    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
+    calls = []
+    _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh(minutes_ago=45))],
+              lambda r, *a: calls.append(r) or None)
+    assert calls == []
+
+
+class _RateLimited(Exception):
+    status_code = 429
+
+
+def test_loop_rate_limit_is_retried_not_given_up(monkeypatch, tmp_path):
+    """A 429 waits its turn; it never counts towards the attempt limit."""
+    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
+    monkeypatch.setattr(pipeline, "_RATE_LIMIT_PAUSE_SECONDS", 0.01)
+    calls = []
+
+    def process(release, *a):
+        calls.append(release.url)
+        if len(calls) <= pipeline._MAX_LLM_ATTEMPTS + 1:
+            raise _RateLimited("429")
+        return _event_for(release)
+
+    published = _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh())], process,
+                          seconds=2.0)
+    assert len(calls) == pipeline._MAX_LLM_ATTEMPTS + 2
+    assert len(published) == 1
+
+
+def test_loop_other_errors_still_give_up(monkeypatch, tmp_path):
+    monkeypatch.setenv("PR_FMP_TIMEZONE", "UTC")
+    monkeypatch.setattr(pipeline, "_MAX_LLM_ATTEMPTS", 1)
+    calls = []
+
+    def process(release, *a):
+        calls.append(release.url)
+        raise RuntimeError("boom")
+
+    assert _run_loop(monkeypatch, tmp_path, [_row(publishedDate=_fresh())], process) == []
+    assert len(calls) == 1
+
+
+def test_short_teaser_reaches_the_llm_when_the_article_fetch_fails():
+    """Business Wire / GlobeNewswire teasers are often one sentence; with
+    the headline that is still a briefing, not a body_too_short drop."""
+    counters = pipeline._new_counters()
+    release = _release(
+        symbol="CNP",
+        title="CenterPoint Energy Reports Q3 2026 Deliveries of 1.3 Million Units, Down 1%",
+        text="Q3 2026 consolidated deliveries 1.3 million units, down 1% y-o-y. "
+             "Growth in Texas was offset by lower volumes in Ohio following a planned shutdown.",
+    )
+    with patch.object(materiality, "_chat_json", return_value=_llm()) as chat:
+        assert pipeline.process_release(release, _INDEX, [], counters) is not None
+    chat.assert_called_once()
+    assert counters["teaser_only"] == 1
 
 
 def test_loop_dry_run_does_not_publish(monkeypatch, tmp_path):

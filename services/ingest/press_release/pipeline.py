@@ -28,6 +28,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import seen as seen_store
+from briefing import _is_rate_limit
 from events import FilingEvent, FilingEventBriefing
 from parser import strip_html
 from publisher import publish_filing
@@ -185,6 +186,13 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         return None
 
     body_text = fetch_release_body(release)
+    if release.body_is_teaser and not release.body_from_article:
+        # Only FMP's teaser to go on (the wire refused or timed out). It
+        # still carries the headline and the dateline, which is enough to
+        # brief from; the thin-body check below counts the headline too.
+        counters["teaser_only"] += 1
+        log.info("PR article fetch failed [%s] %.80s — briefing from the teaser",
+                 release.wire, headline)
     if not is_english(body_text):
         counters["non_english"] += 1
         return None
@@ -306,8 +314,8 @@ def _new_counters() -> dict:
         "fetched": 0, "non_english": 0, "prefilter_dropped": 0,
         "blocklisted": 0, "no_ticker": 0, "issuer_fail": 0,
         "issuer_unverified": 0, "cross_wire_dup": 0, "llm_calls": 0,
-        "llm_dropped": 0, "llm_failed": 0, "published": 0,
-        "stale": 0,
+        "llm_dropped": 0, "llm_failed": 0, "rate_limited": 0,
+        "published": 0, "stale": 0, "teaser_only": 0,
     }
 
 
@@ -439,8 +447,21 @@ async def pr_poll_loop(get_ticker_index) -> None:
 # workers run the gate chain (article fetch + LLM) concurrently. A burst of
 # releases at 8:00 ET therefore costs one LLM round-trip of latency, not
 # one per release in the burst, and a slow LLM call never delays the poll.
+#
+# Two age limits. On the first poll after a start, anything older than
+# PR_MAX_AGE_MINUTES is backlog, not news (a deploy wipes the seen-file).
+# After that, a row we have never seen is new to FMP's list whatever its
+# publishedDate says — FMP lists some releases many minutes after the wire
+# time — so it only has to be younger than PR_MAX_LATE_MINUTES.
+#
+# Groq rate limits (the free tier is 8K tokens/min, roughly two releases a
+# minute) are a queue, not a failure: a rate-limited release is retried
+# until PR_MAX_LATE_MINUTES after it was first seen, and every worker
+# pauses so the backlog doesn't spend its retries hammering a full bucket.
+# Only other errors count towards _MAX_LLM_ATTEMPTS.
 
 _STATS_EVERY_SECONDS = 60
+_RATE_LIMIT_PAUSE_SECONDS = 20
 
 
 def _age_minutes(published_iso: str) -> float | None:
@@ -463,10 +484,8 @@ async def fmp_poll_loop(get_ticker_index) -> None:
     loop = asyncio.get_running_loop()
     poll_every = _env_float("PR_FMP_POLL_SECONDS", 1.0, 0.25)
     workers = int(_env_float("PR_WORKERS", 4, 1))
-    # Older than this when first seen → not news any more. Also what keeps
-    # a cold start (empty seen-file after a deploy) from briefing the whole
-    # backlog the endpoint returns.
     max_age = _env_float("PR_MAX_AGE_MINUTES", 30, 1)
+    max_late = max(max_age, _env_float("PR_MAX_LATE_MINUTES", 360, 1))
 
     seen = seen_store.load_seen(PR_SEEN_FILE)
     fp_entries = _load_fingerprints()
@@ -474,35 +493,68 @@ async def fmp_poll_loop(get_ticker_index) -> None:
     in_flight: set[str] = set()
     attempts: dict[str, int] = {}
     retry_at: dict[str, float] = {}
+    first_seen: dict[str, float] = {}       # key → wall time first listed
     counters = _new_counters()
-    state = {"dirty": False}
+    state = {"dirty": False, "paused_until": 0.0}
 
     def mark_seen(key: str) -> None:
         seen[key] = datetime.now(timezone.utc).isoformat()
+        first_seen.pop(key, None)
         state["dirty"] = True
+
+    def held_minutes(key: str) -> float:
+        return (time.time() - first_seen.get(key, time.time())) / 60
 
     async def worker() -> None:
         while True:
             release = await queue.get()
             key = f"fmp:{release.guid}"
+            wait = state["paused_until"] - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
             try:
                 event = await loop.run_in_executor(
                     None, process_release,
                     release, get_ticker_index(), fp_entries, counters,
                 )
             except Exception as exc:
-                counters["llm_failed"] += 1
-                n = attempts.get(key, 0) + 1
-                if n >= _MAX_LLM_ATTEMPTS:
-                    mark_seen(key)
-                    attempts.pop(key, None)
-                    log.warning("PR giving up after %d attempts (%s): %s", n, key, exc)
-                else:
-                    attempts[key] = n
-                    retry_at[key] = time.monotonic() + 30 * n
-                    log.warning("PR processing failed attempt %d (%s): %s", n, key, exc)
                 event = None
+                if _is_rate_limit(exc):
+                    counters["rate_limited"] += 1
+                    state["paused_until"] = max(
+                        state["paused_until"],
+                        time.monotonic() + _RATE_LIMIT_PAUSE_SECONDS)
+                    if held_minutes(key) > max_late:
+                        mark_seen(key)
+                        counters["llm_failed"] += 1
+                        log.warning("PR giving up, rate-limited for %.0fm (%s) %.80s",
+                                    held_minutes(key), key, release.headline)
+                    else:
+                        retry_at[key] = time.monotonic() + _RATE_LIMIT_PAUSE_SECONDS
+                        log.info("PR rate-limited, will retry (%s) %.80s",
+                                 key, release.headline)
+                else:
+                    counters["llm_failed"] += 1
+                    n = attempts.get(key, 0) + 1
+                    if n >= _MAX_LLM_ATTEMPTS:
+                        mark_seen(key)
+                        attempts.pop(key, None)
+                        log.warning("PR giving up after %d attempts (%s): %s", n, key, exc)
+                    else:
+                        attempts[key] = n
+                        retry_at[key] = time.monotonic() + 30 * n
+                        log.warning("PR processing failed attempt %d (%s): %s", n, key, exc)
             else:
+                if event is not None:
+                    # Where the time went: wire → FMP listing us, and
+                    # FMP → our publish (article fetch, LLM, retries).
+                    listed = first_seen.get(key, time.time())
+                    age = _age_minutes(release.published)
+                    wire_to_fmp = (age * 60 - (time.time() - listed)) if age is not None else None
+                    event_lag = (f"wire→fmp={wire_to_fmp:.0f}s " if wire_to_fmp is not None else "")
+                    event_lag += f"fmp→publish={time.time() - listed:.0f}s"
+                else:
+                    event_lag = ""
                 mark_seen(key)
                 attempts.pop(key, None)
             finally:
@@ -511,20 +563,22 @@ async def fmp_poll_loop(get_ticker_index) -> None:
 
             if event is not None:
                 _publish(event, fp_entries, counters)
-                log.info("Published PR: [%s] %s ticker=%s tier=%d",
+                log.info("Published PR: [%s] %s ticker=%s tier=%d %s",
                          event.source, event.briefing.headline,
-                         event.ticker, event.max_tier)
+                         event.ticker, event.max_tier, event_lag)
                 # Crash-safety: persist right after each (LLM-expensive) publish
                 seen_store.save_seen(seen, PR_SEEN_FILE)
                 _save_fingerprints(fp_entries)
                 state["dirty"] = False
 
     worker_tasks = [asyncio.create_task(worker()) for _ in range(workers)]
-    log.info("PR ingest enabled: FMP every %.2fs, %d worker(s), max age %dm, seen=%d%s",
-             poll_every, workers, max_age, len(seen),
+    log.info("PR ingest enabled: FMP every %.2fs, %d worker(s), max age %dm "
+             "(late listings %dm), seen=%d%s",
+             poll_every, workers, max_age, max_late, len(seen),
              " [DRY RUN]" if _dry_run() else "")
 
     backoff_step = 0
+    baselined = False
     last_stats = time.monotonic()
     try:
         while True:
@@ -544,28 +598,39 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                 continue
 
             releases, other_wire = fmp.parse_fmp_rows(rows)
+            now = time.monotonic()
             for release in reversed(releases):          # oldest first
                 key = f"fmp:{release.guid}"
                 if key in seen or key in in_flight:
                     continue
-                if retry_at.get(key, 0) > time.monotonic():
+                if retry_at.get(key, 0) > now:
                     continue
                 retry_at.pop(key, None)
-                age = _age_minutes(release.published)
-                if age is not None and age > max_age:
-                    counters["stale"] += 1
-                    mark_seen(key)
-                    continue
-                counters["fetched"] += 1
+                if key not in first_seen:
+                    age = _age_minutes(release.published)
+                    limit = max_late if baselined else max_age
+                    if age is not None and age > limit:
+                        counters["stale"] += 1
+                        mark_seen(key)
+                        if baselined:
+                            log.info("PR stale [%s] %.80s — %.0fm old when FMP listed it",
+                                     release.wire, release.headline, age)
+                        continue
+                    first_seen[key] = time.time()
+                    counters["fetched"] += 1
+                    if baselined and age is not None and age > max_age:
+                        log.info("PR listed late by FMP [%s] %.80s — %.0fm after the wire",
+                                 release.wire, release.headline, age)
                 in_flight.add(key)
                 queue.put_nowait(release)
+            baselined = True
 
             if state["dirty"] and not in_flight:
                 seen_store.save_seen(seen, PR_SEEN_FILE)
                 state["dirty"] = False
 
             if time.monotonic() - last_stats >= _STATS_EVERY_SECONDS:
-                if counters["fetched"] or counters["stale"]:
+                if counters["fetched"] or counters["stale"] or queue.qsize():
                     log.info("PR poll (last %ds): %s queue=%d other_wire_rows=%d",
                              _STATS_EVERY_SECONDS,
                              " ".join(f"{k}={v}" for k, v in counters.items() if v),

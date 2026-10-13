@@ -35,7 +35,10 @@ _EVENT_TYPES_STR = ", ".join(f'"{t}"' for t in EVENT_TYPES)
 # said everything material well before it.
 _BODY_TEXT_CAP = 12_000
 # Only reachable when the article fetch failed and FMP's teaser is all we
-# have; a couple of sentences is still enough to brief.
+# have. Measured over headline + body: Business Wire and GlobeNewswire
+# teasers are often a single ~150-char sentence ("Q3 shipments 1.3 million
+# units, down 1%"), and with the headline that is still enough to brief —
+# the LLM answers insufficient_content when it isn't.
 _MIN_BODY_CHARS = 200
 
 
@@ -47,7 +50,7 @@ class Drop:
 
 def prefilter_reason(headline: str, body_text: str) -> str | None:
     """Deterministic pre-LLM rejection: too little text to brief."""
-    if len(body_text.strip()) < _MIN_BODY_CHARS:
+    if len(headline.strip()) + len(body_text.strip()) < _MIN_BODY_CHARS:
         return "body_too_short"
     return None
 

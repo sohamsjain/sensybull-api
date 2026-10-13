@@ -40,6 +40,12 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# The Groq SDK's transport logs every connection step and dumps full
+# response headers (cookies included) at DEBUG — a dozen lines per LLM
+# call that bury the pipeline's own lines. Its "HTTP Request: ... 200 OK"
+# INFO line stays.
+for _noisy in ("httpx", "httpcore", "groq"):
+    logging.getLogger(_noisy).setLevel(logging.INFO)
 log = logging.getLogger(__name__)
 
 TICKER_REFRESH_INTERVAL = 24 * 60 * 60

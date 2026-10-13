@@ -70,6 +70,9 @@ class PRRelease:
     # The inline body is only a teaser whatever its length (FMP's `text`),
     # so the article page is always fetched.
     body_is_teaser: bool = False
+    # Set by fetch_release_body when the text came from the article page
+    # rather than the inline body/teaser.
+    body_from_article: bool = False
 
 
 @dataclass
@@ -225,9 +228,13 @@ def fetch_release_body(release: PRRelease) -> str:
                 release.issuer_name = extract_issuer(page)
             extracted = extract_release_text(page)
             if len(extracted) > len(inline):
+                release.body_from_article = True
                 return extracted
+            log.info("Article page has no recognisable release text (%s)", release.url)
     except Exception as exc:
-        log.debug("Article fetch failed (%s): %s", release.url, exc)
+        # INFO, not DEBUG: a wire that 403s or times out silently turns
+        # every release from it into a teaser, which is worth seeing.
+        log.info("Article fetch failed (%s): %s", release.url, exc)
     return inline
 
 
