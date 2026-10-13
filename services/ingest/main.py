@@ -14,6 +14,7 @@ in this one worker, each under a crash-restart supervisor.
 
 import asyncio
 import logging
+import os
 import re
 
 from briefing import generate_briefing
@@ -36,16 +37,16 @@ from publisher import publish_filing
 from seen import load_seen, save_seen
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s  %(levelname)-8s  %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-# The Groq SDK's transport logs every connection step and dumps full
-# response headers (cookies included) at DEBUG — a dozen lines per LLM
-# call that bury the pipeline's own lines. Its "HTTP Request: ... 200 OK"
-# INFO line stays.
-for _noisy in ("httpx", "httpcore", "groq"):
-    logging.getLogger(_noisy).setLevel(logging.INFO)
+# At DEBUG the Groq SDK logs every request's full prompt and httpcore logs
+# every socket step — thousands of lines per filing. Pinned quieter whatever
+# LOG_LEVEL is; the SDK's 429 "Retrying request … in Ns" stays (INFO).
+logging.getLogger("groq").setLevel(logging.INFO)
+for _noisy in ("httpx", "httpcore", "urllib3", "redis"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 TICKER_REFRESH_INTERVAL = 24 * 60 * 60
