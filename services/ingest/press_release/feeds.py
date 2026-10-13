@@ -20,7 +20,9 @@ tests/fixtures/pr/ encode the expected shapes.
 import gzip
 import logging
 import os
+import threading
 import time
+import urllib.parse
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -214,6 +216,41 @@ def parse_wire_feed(data: bytes, config: WireConfig) -> list[PRRelease]:
     return releases
 
 
+# A wire host that fails this many article fetches in a row is skipped for
+# _HOST_COOLDOWN seconds, then tried again once. Oct 2026: every Business
+# Wire fetch timed out, and each one held a worker 21s (10s × 2 tries) to
+# end up with the teaser anyway.
+_HOST_FAILURE_LIMIT = 3
+_HOST_COOLDOWN = 600
+_host_lock = threading.Lock()
+_host_failures: dict[str, int] = {}
+_host_skip_until: dict[str, float] = {}
+
+
+def _host_of(url: str) -> str:
+    return (urllib.parse.urlsplit(url).hostname or "").lower()
+
+
+def _host_skipped(host: str) -> bool:
+    with _host_lock:
+        return time.monotonic() < _host_skip_until.get(host, 0.0)
+
+
+def _record_fetch(host: str, ok: bool) -> None:
+    with _host_lock:
+        if ok:
+            if _host_failures.pop(host, 0) >= _HOST_FAILURE_LIMIT:
+                log.info("Article fetches from %s are working again", host)
+            _host_skip_until.pop(host, None)
+            return
+        n = _host_failures.get(host, 0) + 1
+        _host_failures[host] = n
+        if n >= _HOST_FAILURE_LIMIT:
+            _host_skip_until[host] = time.monotonic() + _HOST_COOLDOWN
+            log.warning("Article fetches from %s failed %d times in a row — "
+                        "skipping it for %ds", host, n, _HOST_COOLDOWN)
+
+
 def fetch_release_body(release: PRRelease) -> str:
     """Plain text of the release, fetching the article page when the inline
     body is a teaser. Never raises.
@@ -228,8 +265,13 @@ def fetch_release_body(release: PRRelease) -> str:
     thin = release.body_is_teaser or len(inline) < _MIN_INLINE_BODY_CHARS
     if not thin or not release.url:
         return inline
+    host = _host_of(release.url)
+    if _host_skipped(host):
+        release.fetch_error = f"{host} skipped after repeated failures"
+        return inline
     try:
         raw = fetch_pr_url(release.url, retries=2, timeout=_ARTICLE_TIMEOUT, html=True)
+        _record_fetch(host, True)
         if raw:
             page = raw.decode("utf-8", errors="replace")
             if not release.issuer_name:
@@ -244,6 +286,7 @@ def fetch_release_body(release: PRRelease) -> str:
         # every release from it into a teaser, which is worth seeing.
         log.info("Article fetch failed (%s): %s", release.url, exc)
         release.fetch_error = str(exc)
+        _record_fetch(host, False)
     return inline
 
 
