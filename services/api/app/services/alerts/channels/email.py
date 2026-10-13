@@ -50,7 +50,7 @@ class EmailChannel(NotificationChannel):
     def name(self) -> str:
         return 'email'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, view=None) -> None:
         client = app.extensions.get('mail')
         if client is None:
             log.debug('EmailChannel: skipped (no RESEND_API_KEY) user=%s', user.id)
@@ -80,11 +80,14 @@ class EmailChannel(NotificationChannel):
             'summary_bullets': briefing.get('bullets', []),
             'edgar_url': event.edgar_url or '',
             'event_url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/e/{event.id}",
+            'view_name': view.name if view is not None else None,
         }
 
         html, text = render('filing_alert', context)
 
         subject = f"{event.company_name or event.ticker}: {headline}"
+        if view is not None:
+            subject = f"[{view.name}] {subject}"
 
         message = EmailMessage(
             to=user.email,

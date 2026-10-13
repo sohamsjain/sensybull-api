@@ -356,6 +356,11 @@ def tick(app, socketio) -> int:
                 if _process_event_rows(db, event, event_rows, company, now):
                     done_count += sum(1 for r in event_rows if r.status == "done")
                     _emit_reactions(socketio, event)
+                    if any(r.is_explosive for r in event_rows if r.status == "done"):
+                        # Saved views filtered on "moved the stock" can
+                        # only match once the move is measured
+                        from app.services.alerts.dispatcher import trigger_view_alerts
+                        trigger_view_alerts(app, event.id)
             except prices.MarketDataError as exc:
                 db.session.rollback()
                 for row in event_rows:

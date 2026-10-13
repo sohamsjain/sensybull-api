@@ -16,7 +16,7 @@ class SmsChannel(NotificationChannel):
     def name(self) -> str:
         return 'sms'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, view=None) -> None:
         from twilio.rest import Client
         from app.models.channel_config import ChannelConfig
 

@@ -10,6 +10,8 @@ _FEED_FILTER_PARAMS = [
      "description": "Only market-moving events (the payload's `important` flag)"},
     {"name": "sector", "in": "query", "schema": {"type": "string"},
      "description": "Comma-separated FMP sectors, e.g. `Healthcare,Technology` (options: GET /events/filters)"},
+    {"name": "industry", "in": "query", "schema": {"type": "string"},
+     "description": "Comma-separated industry keys (slugs), e.g. `biotechnology,semiconductors` (options: GET /events/filters `industry`). Combined with `sector` as one filter: an event matches when its company is in any chosen sector OR any chosen industry"},
     {"name": "cap", "in": "query", "schema": {"type": "string"},
      "description": "Comma-separated market-cap buckets: mega (≥$200B), large ($10–200B), mid ($2–10B), small ($300M–2B), micro (<$300M)"},
     {"name": "source", "in": "query", "schema": {"type": "string", "enum": ["sec", "pr"]},
@@ -31,6 +33,8 @@ _FEED_VIEW = {
         "name": {"type": "string", "maxLength": 60},
         "filters": {"type": "object", "description": "Canonical filter dict — same keys as the feed query string, plus `scope` (all|mine)"},
         "position": {"type": "integer"},
+        "alerts": {"type": "boolean", "description": "New updates matching this view are sent through the reader's alert channels"},
+        "alert_rate": {"type": "number", "nullable": True, "description": "Returned on create/update when alerts are on: matching updates per day over the last 7 days"},
     },
 }
 
@@ -947,6 +951,7 @@ OPENAPI_SPEC["paths"].update({
                         "total": {"type": "integer"},
                         "event_type": {"type": "object", "additionalProperties": {"type": "integer"}},
                         "sector": {"type": "object", "additionalProperties": {"type": "integer"}},
+                        "industry": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "Keyed by industry slug"},
                         "cap": {"type": "object", "additionalProperties": {"type": "integer"}},
                         "source": {"type": "object", "additionalProperties": {"type": "integer"}},
                         "sentiment": {"type": "object", "additionalProperties": {"type": "integer"}},
@@ -963,7 +968,7 @@ OPENAPI_SPEC["paths"].update({
         "get": {
             "tags": ["Events"],
             "summary": "Feed filter options (public)",
-            "description": "Every value each feed filter accepts, with display labels and market-cap bucket bounds.",
+            "description": "Every value each feed filter accepts, with display labels and market-cap bucket bounds. `industry` is the sector → industry tree: `[{sector, industries: [{key, label, companies}]}]`.",
             "responses": {"200": {"description": "Options"}},
         },
     },
@@ -981,7 +986,8 @@ OPENAPI_SPEC["paths"].update({
             "security": [{"BearerAuth": []}],
             "requestBody": {"required": True, "content": {"application/json": {"schema": {
                 "type": "object", "required": ["name"],
-                "properties": {"name": {"type": "string"}, "filters": {"type": "object"}}}}}},
+                "properties": {"name": {"type": "string"}, "filters": {"type": "object"},
+                               "alerts": {"type": "boolean", "default": False}}}}}},
             "responses": {
                 "201": {"description": "Created", "content": {"application/json": {"schema": {
                     "type": "object", "properties": {"view": _FEED_VIEW}}}}},
@@ -993,13 +999,14 @@ OPENAPI_SPEC["paths"].update({
     "/api/v1/feed/views/{view_id}": {
         "put": {
             "tags": ["Events"],
-            "summary": "Rename, re-filter or reorder a saved view",
+            "summary": "Rename, re-filter, reorder, or switch alerts on a saved view",
             "security": [{"BearerAuth": []}],
             "parameters": [{"name": "view_id", "in": "path", "required": True, "schema": {"type": "string"}}],
             "requestBody": {"content": {"application/json": {"schema": {
                 "type": "object",
-                "properties": {"name": {"type": "string"}, "filters": {"type": "object"}, "position": {"type": "integer"}}}}}},
-            "responses": {"200": {"description": "Updated"}, "400": {"description": "Bad value"},
+                "properties": {"name": {"type": "string"}, "filters": {"type": "object"}, "position": {"type": "integer"},
+                               "alerts": {"type": "boolean"}}}}}},
+            "responses": {"200": {"description": "Updated"}, "400": {"description": "Bad value, or alerts on a view that matches every update"},
                           "404": {"description": "Not found"}, "409": {"description": "Duplicate name"}},
         },
         "delete": {

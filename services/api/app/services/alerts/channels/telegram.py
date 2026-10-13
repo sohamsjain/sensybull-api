@@ -18,7 +18,7 @@ class TelegramChannel(NotificationChannel):
     def name(self) -> str:
         return 'telegram'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, view=None) -> None:
         from app.models.channel_config import ChannelConfig
 
         cfg = app.config

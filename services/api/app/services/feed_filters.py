@@ -81,6 +81,11 @@ MOVES = ["any", "up", "down"]  # an explosive reaction, in either / one directio
 WINDOWS = {"1d": 1, "7d": 7, "30d": 30, "90d": 90}
 SCOPES = ["all", "mine"]
 
+# How long the known-industry list is trusted before it is re-read. An
+# unknown slug forces a re-read anyway (a company synced a minute ago
+# shouldn't 400), so this only bounds how stale the *options* list gets.
+INDUSTRY_TTL_SECONDS = 600
+
 MAX_QUERY_LEN = 100
 
 
@@ -94,6 +99,35 @@ def normalize_sector(raw) -> str | None:
     if not text:
         return None
     return _SECTOR_BY_LOWER.get(text) or _SECTOR_ALIASES.get(text)
+
+
+def industry_slug(name) -> str:
+    """FMP's industry name → its filter key: "Banks - Regional" →
+    "banks-regional". Names carry commas ("Furnishings, Fixtures &
+    Appliances"), so they can't ride a comma-separated query value; the
+    slug can. Mirrored by sensybull-web `industrySlug()`."""
+    return re.sub(r"[^a-z0-9]+", "-", str(name or "").lower()).strip("-")
+
+
+_industries: dict = {"at": 0.0, "by_slug": {}}
+
+
+def known_industries(*, refresh: bool = False) -> dict[str, str]:
+    """{slug: industry name} for every industry a company carries."""
+    import time
+
+    if refresh or time.monotonic() - _industries["at"] > INDUSTRY_TTL_SECONDS:
+        names = db.session.execute(
+            sa.select(Company.industry).where(Company.industry.isnot(None)).distinct()
+        ).scalars().all()
+        _industries["by_slug"] = {industry_slug(n): n for n in names if industry_slug(n)}
+        _industries["at"] = time.monotonic()
+    return _industries["by_slug"]
+
+
+def industry_names(slugs: list[str]) -> list[str]:
+    known = known_industries()
+    return [known[s] for s in slugs if s in known]
 
 
 def cap_bucket(market_cap) -> str | None:
@@ -118,6 +152,11 @@ class FeedFilters:
     important: bool = False
     event_types: list[str] = field(default_factory=list)
     sectors: list[str] = field(default_factory=list)
+    # Industry slugs (see industry_slug). Sector and industry are one
+    # classification filter: a company matches when it is in any chosen
+    # sector OR any chosen industry, the way a sector → industry tree
+    # reads (tick a whole sector, or single industries in another).
+    industries: list[str] = field(default_factory=list)
     caps: list[str] = field(default_factory=list)
     source: str | None = None
     sentiments: list[str] = field(default_factory=list)
@@ -135,7 +174,7 @@ class FeedFilters:
         if self.important:
             out["important"] = True
         for key, values in (("event_type", self.event_types), ("sector", self.sectors),
-                            ("cap", self.caps), ("sentiment", self.sentiments)):
+                            ("industry", self.industries), ("cap", self.caps), ("sentiment", self.sentiments)):
             if values:
                 out[key] = list(values)
         if self.source:
@@ -215,6 +254,12 @@ def parse_filters(source, *, event_types: list[str] | None = None) -> FeedFilter
     f.event_types = _pick(event_types or EVENT_TYPES, _list(get("event_type")),
                           "event_type", casefold=True)
     f.sectors = _pick(SECTORS, [normalize_sector(s) or s for s in _list(get("sector"))], "sector")
+    industries = [industry_slug(i) for i in _list(get("industry"))]
+    if industries:
+        known = known_industries()
+        if any(i not in known for i in industries):
+            known = known_industries(refresh=True)
+        f.industries = _pick(list(known), industries, "industry")
     f.caps = _pick(CAP_KEYS, [c.lower() for c in _list(get("cap"))], "cap")
     f.sentiments = _pick(SENTIMENTS, _list(get("sentiment")), "sentiment", casefold=True)
 
@@ -287,6 +332,17 @@ def _cap_clause(caps: list[str]):
     return sa.or_(*ranges)
 
 
+def _classification_clause(f: FeedFilters):
+    """In a chosen sector, or in a chosen industry (see FeedFilters)."""
+    conds = []
+    if f.sectors:
+        conds.append(Company.sector.in_(f.sectors))
+    names = industry_names(f.industries)
+    if names:
+        conds.append(Company.industry.in_(names))
+    return sa.or_(*conds) if conds else sa.false()
+
+
 def _company_ids_where(*conds):
     return sa.select(Company.id).where(*conds)
 
@@ -309,9 +365,9 @@ def apply_filters(query, f: FeedFilters, *, skip: str | None = None, now: dateti
     if f.event_types and skip != "event_type":
         query = query.filter(FilingEvent.event_types.any(EventType.type_name.in_(f.event_types)))
 
-    if f.sectors and skip != "sector":
+    if (f.sectors or f.industries) and skip != "sector":
         query = query.filter(FilingEvent.company_id.in_(
-            _company_ids_where(Company.sector.in_(f.sectors))))
+            _company_ids_where(_classification_clause(f))))
 
     if f.caps and skip != "cap":
         query = query.filter(FilingEvent.company_id.in_(_company_ids_where(_cap_clause(f.caps))))
@@ -385,6 +441,13 @@ def facet_counts(base_query_factory, f: FeedFilters) -> dict:
 
     sector = {k: n for k, n in grouped("sector", Company.sector, join_company=True).items()
               if k in SECTORS}
+    # Same skip as sector: the two are one filter, so ticking an industry
+    # never zeroes its neighbours
+    industry: dict[str, int] = {}
+    for name, n in grouped("sector", Company.industry, join_company=True).items():
+        slug = industry_slug(name)
+        if slug:
+            industry[slug] = industry.get(slug, 0) + n
 
     bucket_expr = sa.case(
         *[((Company.market_cap >= max(low, 1)) & (Company.market_cap < high) if high is not None
@@ -411,6 +474,7 @@ def facet_counts(base_query_factory, f: FeedFilters) -> dict:
         "total": total,
         "event_type": event_type,
         "sector": sector,
+        "industry": industry,
         "cap": cap,
         "source": source,
         "sentiment": sentiment,
@@ -419,12 +483,35 @@ def facet_counts(base_query_factory, f: FeedFilters) -> dict:
     }
 
 
+def industry_tree() -> list[dict]:
+    """[{sector, industries: [{key, label, companies}]}] in SECTORS order,
+    industries alphabetical. Listed companies only — the count is how big
+    the industry is, not how busy, so a reader can tell "Biotechnology"
+    (hundreds) from "Shell Companies" (a handful) before ticking it."""
+    rows = db.session.execute(
+        sa.select(Company.sector, Company.industry, sa.func.count(Company.id))
+        .where(Company.sector.in_(SECTORS), Company.industry.isnot(None),
+               Company.listed.isnot(False))
+        .group_by(Company.sector, Company.industry)
+    ).all()
+    by_sector: dict[str, list[dict]] = {}
+    for sector, name, n in rows:
+        slug = industry_slug(name)
+        if slug:
+            by_sector.setdefault(sector, []).append({"key": slug, "label": name, "companies": n})
+    return [
+        {"sector": s, "industries": sorted(by_sector[s], key=lambda i: i["label"].lower())}
+        for s in SECTORS if s in by_sector
+    ]
+
+
 def options_payload(event_types: list[str]) -> dict:
     """Every option each filter offers, with its label — backs the web's
     filter panel so its lists can't drift from what the API accepts."""
     return {
         "event_type": [t for t in event_types if t != "Other"],
         "sector": SECTORS,
+        "industry": industry_tree(),
         "cap": [
             {"key": key, "label": label, "min": low or None, "max": high}
             for key, label, low, high in CAP_BUCKETS

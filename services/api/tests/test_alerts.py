@@ -243,11 +243,23 @@ class TestDispatcher:
         assert 'Resend API down' in n.error_message
 
     def test_trigger_alerts_skips_empty_users(self, app):
-        """trigger_alerts should no-op when user_ids is empty."""
+        """Nobody following the company and no alerting saved view: no-op."""
         from app.services.alerts.dispatcher import trigger_alerts, _executor
         with patch.object(_executor, 'submit') as mock_submit:
             trigger_alerts(app, 'some-event-id', set())
             mock_submit.assert_not_called()
+
+    def test_trigger_alerts_runs_without_followers_for_view_alerts(self, app, db_session, sample_user):
+        """A saved view with alerts on can match any filer's event."""
+        from app.models.feed_view import FeedView
+        from app.services.alerts.dispatcher import trigger_alerts, _executor
+        db_session.session.add(FeedView(user_id=sample_user.id, name='Energy',
+                                        filters={'scope': 'all', 'sector': ['Energy']},
+                                        alerts_enabled=True))
+        db_session.session.commit()
+        with patch.object(_executor, 'submit') as mock_submit:
+            trigger_alerts(app, 'some-event-id', set())
+            mock_submit.assert_called_once()
 
     def test_dispatch_skips_disabled_channel(self, app, db_session, sample_user, sample_event):
         """Channels set to False should not fire."""

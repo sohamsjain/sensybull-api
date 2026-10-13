@@ -122,6 +122,7 @@ class AlertPreferenceUpdateSchema(Schema):
 class NotificationSchema(Schema):
     id = fields.Str(dump_only=True)
     filing_event_id = fields.Str(dump_only=True)
+    feed_view_id = fields.Str(dump_only=True, allow_none=True)
     channel = fields.Str(dump_only=True)
     status = fields.Str(dump_only=True)
     error_message = fields.Str(dump_only=True)
