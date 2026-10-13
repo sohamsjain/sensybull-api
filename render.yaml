@@ -78,8 +78,6 @@ services:
       - key: SEC_USER_AGENT
         sync: false
       # ── Press-release ingestion (see services/ingest/press_release/) ──
-      - key: PR_INGEST_ENABLED
-        value: "0"   # flip to 1 after tools/probe_fmp_press_releases.py --gates looks right
       - key: PR_SOURCE
         value: fmp   # FMP's aggregated press-release endpoint; "rss" = the old per-wire feeds
       - key: FMP_API_KEY
@@ -88,10 +86,6 @@ services:
         value: "1"   # 60 calls/min — fits beside the API's 1,200 and the cron's 1,500 under 3,000
       - key: PR_WORKERS
         value: "4"   # concurrent article-fetch + LLM passes
-      - key: PR_DRY_RUN
-        value: "1"   # run every gate, log "would publish", publish nothing — set 0 to go live
-      - key: PR_POLL_INTERVAL
-        value: "180" # RSS source only
       - key: PR_USER_AGENT
         sync: false  # e.g. "Mozilla/5.0 (compatible; SensybullFeedReader/1.0)"
 

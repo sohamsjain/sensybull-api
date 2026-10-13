@@ -28,6 +28,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import seen as seen_store
+from briefing import _is_rate_limit
 from events import FilingEvent, FilingEventBriefing
 from parser import strip_html
 from publisher import publish_filing
@@ -66,20 +67,10 @@ def _poll_interval() -> int:
         return 180
 
 
-def pr_ingest_enabled() -> bool:
-    return os.environ.get("PR_INGEST_ENABLED", "").strip() in ("1", "true", "yes")
-
-
 def pr_source() -> str:
     """"fmp" (default): FMP's aggregated press-release endpoint. "rss": the
     original per-wire RSS adapters (GlobeNewswire + PR Newswire only)."""
     return os.environ.get("PR_SOURCE", "fmp").strip().lower() or "fmp"
-
-
-def _dry_run() -> bool:
-    """PR_DRY_RUN=1 runs every gate (LLM included) and logs what would
-    publish, without publishing."""
-    return os.environ.get("PR_DRY_RUN", "").strip() in ("1", "true", "yes")
 
 
 def _env_float(name: str, default: float, minimum: float) -> float:
@@ -154,6 +145,14 @@ def _is_cross_wire_dup(entries: list[dict], ticker: str, fingerprints: dict) -> 
 # ---------------------------------------------------------------------------
 # Per-release processing
 # ---------------------------------------------------------------------------
+# Every release FMP lists leaves a trail in the log, law-firm spam included:
+# one "PR fetched" line when it's first seen, then exactly one outcome —
+# "PR drop … — <reason>", "Published PR", or a retry/give-up line.
+
+def _drop(counters: dict, counter: str, release, reason: str) -> None:
+    counters[counter] += 1
+    log.info("PR drop [%s] %.100s — %s", release.wire, release.headline, reason)
+
 
 def process_release(release, ticker_index: dict, fp_entries: list[dict],
                     counters: dict) -> FilingEvent | None:
@@ -170,55 +169,60 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
     language = (release.language or "").strip().lower()
     headline = release.headline.strip()
     if language and not language.startswith("en"):
-        counters["non_english"] += 1
+        _drop(counters, "non_english", release, f"non-English (wire tag {language})")
         return None
     teaser = strip_html(release.body_html or "")
     if not is_english(f"{headline}\n{teaser}"):
-        counters["non_english"] += 1
+        _drop(counters, "non_english", release, "non-English (headline + teaser)")
         return None
     # Law-firm alerts give themselves away in the headline/teaser; dropping
     # them here saves the article fetch.
     blocked = issuer_mod.is_blocklisted(headline, teaser)
     if blocked:
-        counters["blocklisted"] += 1
-        log.info("PR drop [%s] %.80s — blocklist:%s", release.wire, headline, blocked)
+        _drop(counters, "blocklisted", release, f"law-firm blocklist: {blocked!r}")
         return None
 
     body_text = fetch_release_body(release)
+    if release.body_is_teaser and not release.body_from_article:
+        # Only FMP's teaser to go on (the wire refused or timed out). It
+        # still carries the headline and the dateline, which is enough to
+        # brief from; the thin-body check below counts the headline too.
+        counters["teaser_only"] += 1
+        log.info("PR article fetch failed [%s] %.80s — briefing from the teaser",
+                 release.wire, headline)
     if not is_english(body_text):
-        counters["non_english"] += 1
+        _drop(counters, "non_english", release, "non-English (article text)")
         return None
 
     reason = materiality.prefilter_reason(headline, body_text)
     if reason:
-        counters["prefilter_dropped"] += 1
-        log.debug("PR drop [%s] %.80s — %s", release.wire, headline, reason)
+        _drop(counters, "prefilter_dropped", release,
+              f"{reason} ({len(headline) + len(body_text.strip())} chars)")
         return None
 
     blocked = issuer_mod.is_blocklisted(headline, body_text)
     if blocked:
-        counters["blocklisted"] += 1
-        log.info("PR drop [%s] %.80s — blocklist:%s", release.wire, headline, blocked)
+        _drop(counters, "blocklisted", release, f"law-firm blocklist: {blocked!r}")
         return None
 
     tickers = issuer_mod.extract_tickers(headline, body_text, release.metadata_tickers)
     if not tickers:
-        counters["no_ticker"] += 1
+        _drop(counters, "no_ticker", release, "no US ticker in the tag or the text")
         return None
 
     company, match_kind = issuer_mod.resolve_issuer(
         ticker_index, tickers, release.issuer_name, headline, body_text
     )
     if company is None:
-        counters["issuer_fail"] += 1
-        log.info("PR drop [%s] %.80s — issuer unresolved (tickers=%s)",
-                 release.wire, headline, tickers)
+        known = [t for t in tickers if t in ticker_index]
+        _drop(counters, "issuer_fail", release,
+              f"issuer doesn't match tickers {tickers} (issuer field {release.issuer_name!r})"
+              if known else f"tickers {tickers} not in the SEC ticker map")
         return None
     if match_kind == "unverified":
         if not issuer_mod.names_company(company["norm_name"], headline, body_text):
-            counters["issuer_fail"] += 1
-            log.info("PR drop [%s] %.80s — %s never named (tag without issuer)",
-                     release.wire, headline, company["ticker"])
+            _drop(counters, "issuer_fail", release,
+                  f"tagged {company['ticker']} but never names {company['name']!r}")
             return None
         counters["issuer_unverified"] += 1
         log.info("PR pass-through with unverified issuer [%s] %.80s ticker=%s",
@@ -226,8 +230,8 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 
     fingerprints = build_fingerprints(headline, body_text)
     if _is_cross_wire_dup(fp_entries, company["ticker"], fingerprints):
-        counters["cross_wire_dup"] += 1
-        log.info("PR drop [%s] %.80s — cross-wire duplicate", release.wire, headline)
+        _drop(counters, "cross_wire_dup", release,
+              f"cross-wire duplicate of an earlier {company['ticker']} release")
         return None
 
     published_iso = _iso_published(release.published)
@@ -236,8 +240,7 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
         headline, body_text, company["name"], company["ticker"], published_iso
     )
     if isinstance(result, materiality.Drop):
-        counters["llm_dropped"] += 1
-        log.info("PR drop [%s] %.80s — %s", release.wire, headline, result.reason)
+        _drop(counters, "llm_dropped", release, f"LLM: {result.reason}")
         return None
 
     briefing = result
@@ -283,14 +286,8 @@ def process_release(release, ticker_index: dict, fp_entries: list[dict],
 # ---------------------------------------------------------------------------
 
 def _publish(event: FilingEvent, fp_entries: list[dict], counters: dict) -> None:
-    """Publish (or, in dry-run, log) an event and remember its fingerprints
-    for cross-wire dedup."""
-    if _dry_run():
-        log.info("PR DRY RUN would publish: [%s] %s ticker=%s tier=%d types=%s",
-                 event.source, event.briefing.headline, event.ticker,
-                 event.max_tier, event.event_types)
-    else:
-        publish_filing(event.to_json())
+    """Publish an event and remember its fingerprints for cross-wire dedup."""
+    publish_filing(event.to_json())
     counters["published"] += 1
     fp_entries.append({
         "ticker": event.ticker,
@@ -306,8 +303,8 @@ def _new_counters() -> dict:
         "fetched": 0, "non_english": 0, "prefilter_dropped": 0,
         "blocklisted": 0, "no_ticker": 0, "issuer_fail": 0,
         "issuer_unverified": 0, "cross_wire_dup": 0, "llm_calls": 0,
-        "llm_dropped": 0, "llm_failed": 0, "published": 0,
-        "stale": 0,
+        "llm_dropped": 0, "llm_failed": 0, "rate_limited": 0,
+        "published": 0, "stale": 0, "teaser_only": 0,
     }
 
 
@@ -439,8 +436,21 @@ async def pr_poll_loop(get_ticker_index) -> None:
 # workers run the gate chain (article fetch + LLM) concurrently. A burst of
 # releases at 8:00 ET therefore costs one LLM round-trip of latency, not
 # one per release in the burst, and a slow LLM call never delays the poll.
+#
+# Two age limits. On the first poll after a start, anything older than
+# PR_MAX_AGE_MINUTES is backlog, not news (a deploy wipes the seen-file).
+# After that, a row we have never seen is new to FMP's list whatever its
+# publishedDate says — FMP lists some releases many minutes after the wire
+# time — so it only has to be younger than PR_MAX_LATE_MINUTES.
+#
+# Groq rate limits (the free tier is 8K tokens/min, roughly two releases a
+# minute) are a queue, not a failure: a rate-limited release is retried
+# until PR_MAX_LATE_MINUTES after it was first seen, and every worker
+# pauses so the backlog doesn't spend its retries hammering a full bucket.
+# Only other errors count towards _MAX_LLM_ATTEMPTS.
 
 _STATS_EVERY_SECONDS = 60
+_RATE_LIMIT_PAUSE_SECONDS = 20
 
 
 def _age_minutes(published_iso: str) -> float | None:
@@ -463,10 +473,8 @@ async def fmp_poll_loop(get_ticker_index) -> None:
     loop = asyncio.get_running_loop()
     poll_every = _env_float("PR_FMP_POLL_SECONDS", 1.0, 0.25)
     workers = int(_env_float("PR_WORKERS", 4, 1))
-    # Older than this when first seen → not news any more. Also what keeps
-    # a cold start (empty seen-file after a deploy) from briefing the whole
-    # backlog the endpoint returns.
     max_age = _env_float("PR_MAX_AGE_MINUTES", 30, 1)
+    max_late = max(max_age, _env_float("PR_MAX_LATE_MINUTES", 360, 1))
 
     seen = seen_store.load_seen(PR_SEEN_FILE)
     fp_entries = _load_fingerprints()
@@ -474,35 +482,68 @@ async def fmp_poll_loop(get_ticker_index) -> None:
     in_flight: set[str] = set()
     attempts: dict[str, int] = {}
     retry_at: dict[str, float] = {}
+    first_seen: dict[str, float] = {}       # key → wall time first listed
     counters = _new_counters()
-    state = {"dirty": False}
+    state = {"dirty": False, "paused_until": 0.0}
 
     def mark_seen(key: str) -> None:
         seen[key] = datetime.now(timezone.utc).isoformat()
+        first_seen.pop(key, None)
         state["dirty"] = True
+
+    def held_minutes(key: str) -> float:
+        return (time.time() - first_seen.get(key, time.time())) / 60
 
     async def worker() -> None:
         while True:
             release = await queue.get()
             key = f"fmp:{release.guid}"
+            wait = state["paused_until"] - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
             try:
                 event = await loop.run_in_executor(
                     None, process_release,
                     release, get_ticker_index(), fp_entries, counters,
                 )
             except Exception as exc:
-                counters["llm_failed"] += 1
-                n = attempts.get(key, 0) + 1
-                if n >= _MAX_LLM_ATTEMPTS:
-                    mark_seen(key)
-                    attempts.pop(key, None)
-                    log.warning("PR giving up after %d attempts (%s): %s", n, key, exc)
-                else:
-                    attempts[key] = n
-                    retry_at[key] = time.monotonic() + 30 * n
-                    log.warning("PR processing failed attempt %d (%s): %s", n, key, exc)
                 event = None
+                if _is_rate_limit(exc):
+                    counters["rate_limited"] += 1
+                    state["paused_until"] = max(
+                        state["paused_until"],
+                        time.monotonic() + _RATE_LIMIT_PAUSE_SECONDS)
+                    if held_minutes(key) > max_late:
+                        mark_seen(key)
+                        counters["llm_failed"] += 1
+                        log.warning("PR giving up, rate-limited for %.0fm (%s) %.80s",
+                                    held_minutes(key), key, release.headline)
+                    else:
+                        retry_at[key] = time.monotonic() + _RATE_LIMIT_PAUSE_SECONDS
+                        log.info("PR rate-limited, will retry (%s) %.80s",
+                                 key, release.headline)
+                else:
+                    counters["llm_failed"] += 1
+                    n = attempts.get(key, 0) + 1
+                    if n >= _MAX_LLM_ATTEMPTS:
+                        mark_seen(key)
+                        attempts.pop(key, None)
+                        log.warning("PR giving up after %d attempts (%s): %s", n, key, exc)
+                    else:
+                        attempts[key] = n
+                        retry_at[key] = time.monotonic() + 30 * n
+                        log.warning("PR processing failed attempt %d (%s): %s", n, key, exc)
             else:
+                if event is not None:
+                    # Where the time went: wire → FMP listing us, and
+                    # FMP → our publish (article fetch, LLM, retries).
+                    listed = first_seen.get(key, time.time())
+                    age = _age_minutes(release.published)
+                    wire_to_fmp = (age * 60 - (time.time() - listed)) if age is not None else None
+                    event_lag = (f"wire→fmp={wire_to_fmp:.0f}s " if wire_to_fmp is not None else "")
+                    event_lag += f"fmp→publish={time.time() - listed:.0f}s"
+                else:
+                    event_lag = ""
                 mark_seen(key)
                 attempts.pop(key, None)
             finally:
@@ -511,20 +552,21 @@ async def fmp_poll_loop(get_ticker_index) -> None:
 
             if event is not None:
                 _publish(event, fp_entries, counters)
-                log.info("Published PR: [%s] %s ticker=%s tier=%d",
+                log.info("Published PR: [%s] %s ticker=%s tier=%d %s",
                          event.source, event.briefing.headline,
-                         event.ticker, event.max_tier)
+                         event.ticker, event.max_tier, event_lag)
                 # Crash-safety: persist right after each (LLM-expensive) publish
                 seen_store.save_seen(seen, PR_SEEN_FILE)
                 _save_fingerprints(fp_entries)
                 state["dirty"] = False
 
     worker_tasks = [asyncio.create_task(worker()) for _ in range(workers)]
-    log.info("PR ingest enabled: FMP every %.2fs, %d worker(s), max age %dm, seen=%d%s",
-             poll_every, workers, max_age, len(seen),
-             " [DRY RUN]" if _dry_run() else "")
+    log.info("PR ingest enabled: FMP every %.2fs, %d worker(s), max age %dm "
+             "(late listings %dm), seen=%d",
+             poll_every, workers, max_age, max_late, len(seen))
 
     backoff_step = 0
+    baselined = False
     last_stats = time.monotonic()
     try:
         while True:
@@ -543,29 +585,51 @@ async def fmp_poll_loop(get_ticker_index) -> None:
                 await asyncio.sleep(delay)
                 continue
 
-            releases, other_wire = fmp.parse_fmp_rows(rows)
+            skipped: list[dict] = []
+            releases, other_wire = fmp.parse_fmp_rows(rows, skipped)
+            for row in reversed(skipped):               # other wires: logged once
+                key = f"fmp:{(row.get('url') or '').strip()}"
+                if key in seen:
+                    continue
+                log.info("PR fetched [%s] %s %.100s — skipped: %s isn't an ingested wire",
+                         row.get("site") or "?", (row.get("symbol") or "-"),
+                         row.get("title") or "", row.get("publisher") or "this source")
+                mark_seen(key)
+            now = time.monotonic()
             for release in reversed(releases):          # oldest first
                 key = f"fmp:{release.guid}"
                 if key in seen or key in in_flight:
                     continue
-                if retry_at.get(key, 0) > time.monotonic():
+                if retry_at.get(key, 0) > now:
                     continue
                 retry_at.pop(key, None)
-                age = _age_minutes(release.published)
-                if age is not None and age > max_age:
-                    counters["stale"] += 1
-                    mark_seen(key)
-                    continue
-                counters["fetched"] += 1
+                if key not in first_seen:
+                    age = _age_minutes(release.published)
+                    log.info("PR fetched [%s] %s %.100s — %s old %s",
+                             release.wire, ",".join(release.metadata_tickers) or "-",
+                             release.headline,
+                             f"{age:.0f}m" if age is not None else "?", release.url)
+                    limit = max_late if baselined else max_age
+                    if age is not None and age > limit:
+                        counters["stale"] += 1
+                        mark_seen(key)
+                        log.info("PR drop [%s] %.100s — %s (%.0fm old, limit %dm)",
+                                 release.wire, release.headline,
+                                 "late listing" if baselined else "backlog at start",
+                                 age, limit)
+                        continue
+                    first_seen[key] = time.time()
+                    counters["fetched"] += 1
                 in_flight.add(key)
                 queue.put_nowait(release)
+            baselined = True
 
             if state["dirty"] and not in_flight:
                 seen_store.save_seen(seen, PR_SEEN_FILE)
                 state["dirty"] = False
 
             if time.monotonic() - last_stats >= _STATS_EVERY_SECONDS:
-                if counters["fetched"] or counters["stale"]:
+                if counters["fetched"] or counters["stale"] or queue.qsize():
                     log.info("PR poll (last %ds): %s queue=%d other_wire_rows=%d",
                              _STATS_EVERY_SECONDS,
                              " ".join(f"{k}={v}" for k, v in counters.items() if v),

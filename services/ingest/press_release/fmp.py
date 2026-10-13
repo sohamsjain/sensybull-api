@@ -100,9 +100,10 @@ def _to_iso(raw: str) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-def parse_fmp_rows(rows: list) -> tuple[list[PRRelease], int]:
+def parse_fmp_rows(rows: list, skipped: list | None = None) -> tuple[list[PRRelease], int]:
     """FMP rows → releases (newest first, one per URL) and the count of
-    rows dropped for coming from a wire we don't ingest."""
+    rows dropped for coming from a wire we don't ingest. Those rows are
+    also appended to `skipped` when given, so the poller can log them."""
     by_url: dict[str, PRRelease] = {}
     order: list[str] = []
     other_wire = 0
@@ -116,6 +117,8 @@ def parse_fmp_rows(rows: list) -> tuple[list[PRRelease], int]:
         wire = wire_for(row)
         if not wire:
             other_wire += 1
+            if skipped is not None:
+                skipped.append(row)
             continue
         symbol = (row.get("symbol") or "").strip().upper()
         existing = by_url.get(url)
