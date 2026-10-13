@@ -7,6 +7,10 @@ scope, importance, event types, sectors, cap buckets, source, sentiment,
 price move, time window and search text. It is re-validated through
 parse_filters on every write, so a stored view is always one the feed
 endpoints accept.
+
+`alerts` makes the view an alert rule: every new update matching it goes
+out through the owner's alert channels (app/services/alerts/dispatcher.py
+`trigger_view_alerts`), on top of the alerts for companies they follow.
 """
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,6 +29,8 @@ class FeedView(BaseModel):
         nullable=False, index=True)
     name: so.Mapped[str] = so.mapped_column(sa.String(60), nullable=False)
     filters: so.Mapped[dict] = so.mapped_column(sa.JSON, nullable=False)
+    alerts_enabled: so.Mapped[bool] = so.mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false(), index=True)
     position: so.Mapped[int] = so.mapped_column(
         sa.Integer, nullable=False, default=0, server_default='0')
     updated_at: so.Mapped[Optional[datetime]] = so.mapped_column(
@@ -37,6 +43,7 @@ class FeedView(BaseModel):
             'name': self.name,
             'filters': self.filters,
             'position': self.position,
+            'alerts': bool(self.alerts_enabled),
         }
 
     def __repr__(self):

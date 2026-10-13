@@ -3,21 +3,32 @@
 Saved feed views — a reader's named filter combinations.
 
 GET    /feed/views          the caller's views, in their order
-POST   /feed/views          {name, filters} → the new view (201)
-PUT    /feed/views/<id>     {name?, filters?, position?} → the updated view
+POST   /feed/views          {name, filters, alerts?} → the new view (201)
+PUT    /feed/views/<id>     {name?, filters?, position?, alerts?} → the updated view
 DELETE /feed/views/<id>     {deleted: id}
 
 `filters` takes the same keys as the feed endpoints' query string (scope,
 important, event_type, sector, cap, source, sentiment, moved, since, q)
 and is stored in canonical form, so what comes back is what the feed
 endpoints will accept.
+
+`alerts: true` turns a view into an alert rule (see FeedView). A view that
+narrows nothing — every company, no filters — can't carry alerts: it would
+send every update the market produces. When alerts are on, create/update
+answer with `alert_rate`, the view's matching updates per day over the
+last week, so the reader learns what they signed up for before the first
+email does.
 """
+
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
 from app.models.feed_view import MAX_VIEWS_PER_USER, FeedView
+from app.models.filing_event import FilingEvent
+from app.services import feed_filters
 from app.services.feed_filters import FilterError, parse_filters
 
 feed_views_bp = Blueprint("feed_views", __name__)
@@ -38,6 +49,38 @@ def _clean_filters(raw) -> dict:
     if not isinstance(raw, dict):
         raise FilterError("filters must be an object")
     return parse_filters(raw).to_dict()
+
+
+def _clean_alerts(raw, filters: dict) -> bool:
+    if not isinstance(raw, bool):
+        raise FilterError("alerts must be true or false")
+    if raw and filters == {"scope": "all"}:
+        raise FilterError("add a filter before turning on alerts — this view matches every update")
+    return raw
+
+
+RATE_DAYS = 7
+
+
+def alert_rate(user_id: str, filters: dict) -> float:
+    """Matching updates per day over the last RATE_DAYS days."""
+    from app.routes.events import _user_company_ids
+
+    f = parse_filters(filters)
+    f.window = None
+    q = FilingEvent.query.filter(
+        FilingEvent.created_at >= datetime.now(timezone.utc) - timedelta(days=RATE_DAYS))
+    if f.scope == "mine":
+        q = q.filter(FilingEvent.company_id.in_(_user_company_ids(user_id)))
+    count = feed_filters.apply_filters(q, f).order_by(None).count()
+    return round(count / RATE_DAYS, 1)
+
+
+def _view_payload(view: FeedView) -> dict:
+    out = view.to_dict()
+    if view.alerts_enabled:
+        out["alert_rate"] = alert_rate(view.user_id, view.filters)
+    return out
 
 
 def _own_view(view_id: str):
@@ -63,6 +106,7 @@ def create_view():
     try:
         name = _clean_name(body.get("name"))
         filters = _clean_filters(body.get("filters") or {})
+        alerts = _clean_alerts(body.get("alerts", False), filters)
     except FilterError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -73,12 +117,12 @@ def create_view():
         return jsonify({"error": "a view with that name already exists"}), 409
 
     view = FeedView(
-        user_id=user_id, name=name, filters=filters,
+        user_id=user_id, name=name, filters=filters, alerts_enabled=alerts,
         position=max((v.position for v in existing), default=-1) + 1,
     )
     db.session.add(view)
     db.session.commit()
-    return jsonify({"view": view.to_dict()}), 201
+    return jsonify({"view": _view_payload(view)}), 201
 
 
 @feed_views_bp.route("/views/<view_id>", methods=["PUT"])
@@ -102,10 +146,15 @@ def update_view(view_id):
             if not isinstance(body["position"], int) or isinstance(body["position"], bool):
                 raise FilterError("position must be an integer")
             view.position = body["position"]
+        if "alerts" in body or "filters" in body:
+            # Re-checked on a filter change too: clearing every filter
+            # from an alerting view would otherwise turn it into a firehose
+            view.alerts_enabled = _clean_alerts(
+                body.get("alerts", view.alerts_enabled), view.filters)
     except FilterError as exc:
         return jsonify({"error": str(exc)}), 400
     db.session.commit()
-    return jsonify({"view": view.to_dict()})
+    return jsonify({"view": _view_payload(view)})
 
 
 @feed_views_bp.route("/views/<view_id>", methods=["DELETE"])

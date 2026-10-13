@@ -21,7 +21,7 @@ class PushChannel(NotificationChannel):
     def name(self) -> str:
         return 'push'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, view=None) -> None:
         from pywebpush import webpush, WebPushException
         from app import db
         from app.models.push_subscription import PushSubscription
@@ -42,10 +42,18 @@ class PushChannel(NotificationChannel):
         title = f"{event.ticker or event.company_name}: {briefing.get('headline', 'New SEC filing')}"
         body = (briefing.get('summary') or '')[:180] \
             or f'{tier_label} priority {event.signal_type} filing'
+        frontend = cfg.get('FRONTEND_URL', '').rstrip('/')
+        if view is not None:
+            # A view can match a company the reader doesn't follow, so the
+            # watchlist would be the wrong place to land
+            body = f"{view.name} · {body}"[:200]
+            url = f"{frontend}/e/{event.id}"
+        else:
+            url = f"{frontend}/watchlist"
         payload = json.dumps({
             'title': title,
             'body': body,
-            'url': f"{cfg.get('FRONTEND_URL', '').rstrip('/')}/watchlist",
+            'url': url,
             'tag': event.id,
         })
         claims_sub = cfg.get('VAPID_SUBJECT') or f"mailto:{cfg.get('SUPPORT_EMAIL', 'support@sensybull.com')}"

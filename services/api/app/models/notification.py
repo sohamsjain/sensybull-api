@@ -26,6 +26,9 @@ class Notification(BaseModel):
         index=True)
     error_message: so.Mapped[Optional[str]] = so.mapped_column(
         sa.Text, nullable=True)
+    # The saved view whose alert sent this; null for a followed-company alert
+    feed_view_id: so.Mapped[Optional[str]] = so.mapped_column(
+        sa.String(36), sa.ForeignKey('feed_view.id', ondelete='SET NULL'), nullable=True)
     sent_at: so.Mapped[Optional[datetime]] = so.mapped_column(
         sa.DateTime(timezone=True), nullable=True)
 

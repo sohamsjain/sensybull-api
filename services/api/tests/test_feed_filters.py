@@ -14,9 +14,9 @@ from app.services.feed_filters import cap_bucket, normalize_sector, parse_filter
 NOW = datetime.now(timezone.utc)
 
 
-def _company(db_session, ticker, sector=None, cap=None):
+def _company(db_session, ticker, sector=None, cap=None, industry=None):
     c = Company(name=f"{ticker} Inc.", ticker=ticker, cik=str(abs(hash(ticker)) % 10**9),
-                sector=sector, market_cap=cap)
+                sector=sector, market_cap=cap, industry=industry, listed=True)
     db_session.session.add(c)
     db_session.session.commit()
     return c
@@ -44,12 +44,23 @@ def _event(db_session, company, eid, *, types=("Other",), significance="Medium",
     return e
 
 
+@pytest.fixture(autouse=True)
+def fresh_industry_cache():
+    """The known-industry list is cached per process; each test has its
+    own database."""
+    from app.services import feed_filters
+    feed_filters._industries["at"] = 0.0
+    yield
+    feed_filters._industries["at"] = 0.0
+
+
 @pytest.fixture
 def market(db_session):
     """A small cross-section of the market with one event each."""
-    bio = _company(db_session, "BIO", "Healthcare", 800_000_000)           # small
-    big = _company(db_session, "BIG", "Technology", 3_000_000_000_000)     # mega
-    bank = _company(db_session, "BNK", "Financial Services", 50_000_000_000)  # large
+    bio = _company(db_session, "BIO", "Healthcare", 800_000_000, "Biotechnology")  # small
+    big = _company(db_session, "BIG", "Technology", 3_000_000_000_000, "Semiconductors")  # mega
+    bank = _company(db_session, "BNK", "Financial Services", 50_000_000_000,
+                    "Banks - Regional")  # large
     otc = _company(db_session, "OTC", None, None)
     return {
         "bio": _event(db_session, bio, "e-bio", types=("Regulatory / Clinical",),
@@ -163,6 +174,53 @@ class TestAllEventsFilters:
         assert "industry" in event
 
 
+class TestIndustries:
+    def test_slug(self):
+        from app.services.feed_filters import industry_slug
+        assert industry_slug("Banks - Regional") == "banks-regional"
+        assert industry_slug("Furnishings, Fixtures & Appliances") == "furnishings-fixtures-appliances"
+        assert industry_slug(None) == ""
+
+    def test_industry_filter(self, client, market):
+        assert _ids(client.get("/api/v1/events/all?industry=biotechnology")) == {"e-bio"}
+        assert _ids(client.get("/api/v1/events/all?industry=biotechnology,banks-regional")) \
+            == {"e-bio", "e-bank"}
+
+    def test_sector_or_industry(self, client, market):
+        """One classification filter: a chosen sector OR a chosen industry."""
+        assert _ids(client.get("/api/v1/events/all?sector=Technology&industry=banks-regional")) \
+            == {"e-big", "e-bank"}
+
+    def test_unknown_industry_is_a_400(self, client, market):
+        resp = client.get("/api/v1/events/all?industry=crypto-mining")
+        assert resp.status_code == 400
+        assert "industry" in resp.get_json()["error"]
+
+    def test_a_new_industry_is_known_without_waiting_for_the_cache(self, client, market, db_session):
+        assert _ids(client.get("/api/v1/events/all?industry=biotechnology")) == {"e-bio"}
+        gold = _company(db_session, "GLD", "Basic Materials", 5_000_000_000, "Gold")
+        _event(db_session, gold, "e-gold")
+        assert _ids(client.get("/api/v1/events/all?industry=gold")) == {"e-gold"}
+
+    def test_facets_count_industries_alongside_sectors(self, client, market):
+        data = client.get("/api/v1/events/facets?industry=biotechnology").get_json()
+        assert data["total"] == 1
+        # same skip as sector, so the neighbours say what they'd add
+        assert data["industry"] == {"biotechnology": 1, "semiconductors": 1, "banks-regional": 1}
+        assert data["sector"]["Technology"] == 1
+
+    def test_options_tree(self, client, market):
+        tree = client.get("/api/v1/events/filters").get_json()["industry"]
+        assert [n["sector"] for n in tree] == ["Technology", "Healthcare", "Financial Services"]
+        health = next(n for n in tree if n["sector"] == "Healthcare")
+        assert health["industries"] == [{"key": "biotechnology", "label": "Biotechnology", "companies": 1}]
+
+    def test_saved_view_keeps_the_slug(self, client, auth_headers, market):
+        view = client.post("/api/v1/feed/views", headers=auth_headers, json={
+            "name": "Biotech", "filters": {"industry": "Biotechnology"}}).get_json()["view"]
+        assert view["filters"] == {"scope": "all", "industry": ["biotechnology"]}
+
+
 class TestMineFilters:
     def test_filters_apply_inside_the_watchlist(self, client, auth_headers, sample_user, market, db_session):
         wl = Watchlist(name="Mine", user_id=sample_user.id)
@@ -264,3 +322,37 @@ class TestSavedViews:
         assert client.put(f"/api/v1/feed/views/{view.id}", headers=auth_headers,
                           json={"name": "Mine"}).status_code == 404
         assert client.delete(f"/api/v1/feed/views/{view.id}", headers=auth_headers).status_code == 404
+
+    def test_alerts_flag(self, client, auth_headers, market):
+        resp = client.post("/api/v1/feed/views", headers=auth_headers, json={
+            "name": "Biotech", "filters": {"sector": "Healthcare"}, "alerts": True})
+        assert resp.status_code == 201
+        view = resp.get_json()["view"]
+        assert view["alerts"] is True
+        # e-bio arrived today: one match over the last 7 days
+        assert view["alert_rate"] == round(1 / 7, 1)
+
+        off = client.put(f"/api/v1/feed/views/{view['id']}", headers=auth_headers,
+                         json={"alerts": False}).get_json()["view"]
+        assert off["alerts"] is False and "alert_rate" not in off
+        listed = client.get("/api/v1/feed/views", headers=auth_headers).get_json()["views"]
+        assert listed[0]["alerts"] is False
+
+    def test_no_alerts_on_a_view_that_matches_everything(self, client, auth_headers):
+        resp = client.post("/api/v1/feed/views", headers=auth_headers, json={
+            "name": "All", "filters": {}, "alerts": True})
+        assert resp.status_code == 400
+        view = client.post("/api/v1/feed/views", headers=auth_headers, json={
+            "name": "Energy", "filters": {"sector": "Energy"}, "alerts": True}).get_json()["view"]
+        # clearing every filter from an alerting view is refused too
+        resp = client.put(f"/api/v1/feed/views/{view['id']}", headers=auth_headers,
+                          json={"filters": {}})
+        assert resp.status_code == 400
+        # a "my companies" view is narrow enough on its own
+        assert client.post("/api/v1/feed/views", headers=auth_headers, json={
+            "name": "Mine", "filters": {"scope": "mine"}, "alerts": True}).status_code == 201
+
+    def test_alerts_must_be_a_boolean(self, client, auth_headers):
+        resp = client.post("/api/v1/feed/views", headers=auth_headers, json={
+            "name": "x", "filters": {"sector": "Energy"}, "alerts": "yes"})
+        assert resp.status_code == 400

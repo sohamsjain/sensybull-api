@@ -19,7 +19,7 @@ class DiscordChannel(NotificationChannel):
     def name(self) -> str:
         return 'discord'
 
-    def send(self, user, event, app) -> None:
+    def send(self, user, event, app, view=None) -> None:
         from app.models.channel_config import ChannelConfig
 
         channel_config = ChannelConfig.query.filter_by(

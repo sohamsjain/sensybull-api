@@ -10,8 +10,10 @@
 {% if edgar_url %}View on EDGAR: {{ edgar_url }}
 {% endif %}
 ---
-You received this because {{ company_name }} is on your watchlist.
-Manage alert preferences: {{ frontend_url }}/settings/alerts
+{% if view_name %}You received this because it matches your saved view "{{ view_name }}".
+Turn this view's alerts off in the feed: {{ frontend_url }}/feed
+{% else %}You received this because {{ company_name }} is on your watchlist.
+Manage alert preferences: {{ frontend_url }}/alerts{% endif %}
 
 -- {{ app_name }}
 Need help? {{ support_email }}

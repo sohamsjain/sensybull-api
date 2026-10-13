@@ -27,5 +27,5 @@
     {% endif %}
   </div>
 
-  <p style="font-size:12px;color:#9ca3af;margin:16px 0 0 0;">You received this because {{ company_name }} is on your watchlist. <a href="{{ frontend_url }}/settings/alerts" style="color:#6b7280;text-decoration:underline;">Manage alert preferences</a></p>
+  <p style="font-size:12px;color:#9ca3af;margin:16px 0 0 0;">{% if view_name %}You received this because it matches your saved view &ldquo;{{ view_name }}&rdquo;. <a href="{{ frontend_url }}/feed" style="color:#6b7280;text-decoration:underline;">Turn this view&rsquo;s alerts off in the feed</a>{% else %}You received this because {{ company_name }} is on your watchlist. <a href="{{ frontend_url }}/alerts" style="color:#6b7280;text-decoration:underline;">Manage alert preferences</a>{% endif %}</p>
 {% endblock %}
