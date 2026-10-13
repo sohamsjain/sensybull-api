@@ -13,6 +13,12 @@ release-length prose:
      list. Words shared with German/French/Spanish ("in", "a", "an", "on",
      "die", "de") are deliberately left off the list.
 
+A headline plus a one-line teaser is telegraphic English ("BIO-key Adds New
+Middle East Government Security Agency Customer…") and scores below the
+ratio, so on short text a low score alone isn't enough: it must also show
+more German/French/Spanish/Italian/Dutch function words (or words in
+Vietnamese-style extended Latin) than English ones.
+
 Too little text to judge → assume English and let the later gates decide;
 a missed translation is caught by the LLM, a dropped English release is lost.
 """
@@ -27,11 +33,27 @@ _ENGLISH_FUNCTION_WORDS = frozenset("""
     company new year million billion per
 """.split())
 
+# Function words of the languages wires translate into. Words that are also
+# common in English press releases are left off: "die", "et" (Eastern
+# Time), "los"/"las"/"del"/"el" (Los Angeles, Las Vegas, Wilmington, Del.,
+# El Paso), "y" (y-o-y), "se", "per", "do", "van".
+_FOREIGN_FUNCTION_WORDS = frozenset("""
+    der das und ist mit für von den dem des ein eine einer nicht auf sich
+    wird werden bei nach über
+    le la les est avec pour dans une sur par du au aux qui que cette sont été
+    es con para por una que su sus como más
+    il della di che gli delle
+    het een voor niet zijn wordt
+    não os da
+""".split())
+
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 # Below this many words the ratio is noise
 _MIN_WORDS = 20
 _MIN_FUNCTION_RATIO = 0.10
+# Below this many words a low English ratio needs foreign evidence too
+_SHORT_TEXT_WORDS = 60
 _MAX_NON_LATIN_SHARE = 0.30
 
 
@@ -54,4 +76,12 @@ def is_english(text: str) -> bool:
     if len(words) < _MIN_WORDS:
         return True
     hits = sum(1 for w in words if w in _ENGLISH_FUNCTION_WORDS)
-    return hits / len(words) >= _MIN_FUNCTION_RATIO
+    if hits / len(words) >= _MIN_FUNCTION_RATIO:
+        return True
+    if len(words) >= _SHORT_TEXT_WORDS:
+        return False
+    # A word with letters past Latin Extended-B (Vietnamese "những", …) is
+    # never English, even when the script check above let the text through.
+    foreign = sum(1 for w in words
+                  if w in _FOREIGN_FUNCTION_WORDS or any(ord(c) > 0x024F for c in w))
+    return foreign <= hits

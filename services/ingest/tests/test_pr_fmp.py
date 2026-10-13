@@ -348,6 +348,26 @@ def test_loop_other_errors_still_give_up(monkeypatch, tmp_path):
     assert len(calls) == 1
 
 
+def test_telegraphic_headline_and_teaser_are_english():
+    """Oct 13 2026: BIO-key's headline + one-line teaser scored as foreign."""
+    assert is_english(
+        "BIO-key Adds New Middle East Government Security Agency Customer, Expanding "
+        "Regional Footprint\nBIO-key (BKYI) Adds New Middle East Government Security "
+        "Agency, Expands Regional Footprint, Supports National Digital Transformation "
+        "& Cybersecurity goals.")
+
+
+def test_short_translated_teaser_still_not_english():
+    assert not is_english(
+        "Persistent sichert sich eine starke Mehrheitsbeteiligung\nBei Ablauf der "
+        "zusätzlichen Annahmefrist waren rund 94 % des Grundkapitals von Nagarro "
+        "gesichert, womit die Mindestannahmeschwelle deutlich überschritten wurde.")
+    assert not is_english(
+        "Nagarro: l'offre publique d'achat est un succès\nÀ l'expiration de la "
+        "période d'acceptation, environ 94 % du capital de Nagarro sont sécurisés "
+        "pour Persistent, qui dépasse le seuil minimal.")
+
+
 def test_short_teaser_reaches_the_llm_when_the_article_fetch_fails():
     """Business Wire / GlobeNewswire teasers are often one sentence; with
     the headline that is still a briefing, not a body_too_short drop."""
