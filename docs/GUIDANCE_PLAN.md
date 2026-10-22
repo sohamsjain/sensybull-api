@@ -45,16 +45,11 @@ so we can score every company's track record. That score, shown next to
 every guided number, is the difference between this and a reprint of the
 screenshot. It is also the feature people come back for.
 
-**4. This conflicts with `PRODUCT_VISION.md`, so it needs a written
-decision.** The vision says thesis monitoring is the priority, rules out
-"taxonomy dashboards", and rules out financial-statement parsing. A guidance
-board is a new surface, and transcripts are a new source. The honest
-reconciliation is that **structured guidance is what the thesis judge needs
-to judge against.** The vision itself names "guidance revisions (Item 2.02)"
-as the first thing a verdict should react to. Build guidance as the data
-layer, and the judge's drift verdict on "guidance lowered" comes almost free.
-Don't build it as a separate product with its own roadmap. If you agree,
-update `PRODUCT_VISION.md`'s scope list in the same PR that starts Phase 1.
+**4. One scope rule still applies.** `PRODUCT_VISION.md` rules out
+"taxonomy dashboards". The guidance board is a ranked table of companies, not
+an event-category dashboard, so I read it as allowed. Transcripts are a new
+source, but they are not an SEC form, so "8-K family only" isn't touched.
+Record the decision in `PRODUCT_VISION.md` when Phase 1 starts.
 
 ---
 
@@ -116,11 +111,6 @@ show momentum better than any single number does.
 small-cap healthcare initiating guidance", "withdrawn guidance anywhere").
 These are saved feed views with the new `guidance` dimension. The existing
 dispatcher, channels, mutes and one-alert-per-event key all apply unchanged.
-
-**J6. Thesis drift** (later, the vision's judge). "Guidance lowered" on a
-company whose thesis line says "revenue growth reaccelerates" is the
-cleanest `drift` verdict we will ever have, because it is backed by a
-structured row and a verified quote.
 
 What would make people trust it, and what would make them leave:
 - **Speed:** within about a minute of the release for J1 and J2. Transcript
@@ -348,8 +338,7 @@ more harm than good.
 **Phase 1: real-time guidance on what we already ingest.** Worker + gate +
 extraction for 8-K/PR, `guidance_item`, the action diff, the `guidance` feed
 filter + facets, alert rules, payload + expanded-update rendering. This
-delivers J1, J2 and J5. No transcripts yet. It ships within the scope the
-vision already allows (Item 2.02).
+delivers J1, J2 and J5. No transcripts yet.
 
 **Phase 2: transcripts + history.** FMP transcript fetch (scheduled off the
 earnings calendar), the `transcript` table, a 12-quarter backfill through
@@ -360,9 +349,6 @@ the walk (J4).
 `company_guidance`, consensus snapshotting, `/guidance` board (J3),
 track-record badges in alerts and on the board.
 
-**Phase 4: thesis.** Feed guidance actions into the judge as structured
-input (J6). It belongs to the thesis rebuild, not here.
-
 Stop condition: if Phase 0 fails its gate, ship Phase 1 restricted to
 `withdrawn` and `initiated` (the easiest actions to get right) and stop.
 
@@ -370,11 +356,9 @@ Stop condition: if Phase 0 fails its gate, ship Phase 1 restricted to
 
 ## 9. Open questions for you
 
-1. Is guidance the thesis judge's data layer (my recommendation), or a
-   standalone surface? This decides whether `PRODUCT_VISION.md` changes.
-2. Is the `/guidance` board public (SEO, acquisition) or signed-in only? I'd
+1. Is the `/guidance` board public (SEO, acquisition) or signed-in only? I'd
    make it public like fundamentals and keep alerts behind sign-in.
-3. Collapsed feed cards showing the guidance action breaks "headline only".
+2. Collapsed feed cards showing the guidance action breaks "headline only".
    Accept that exception?
-4. Budget ceiling for the LLM bill (backfill one-off + monthly), which
+3. Budget ceiling for the LLM bill (backfill one-off + monthly), which
    decides the model tier after Phase 0.

@@ -22,10 +22,9 @@
 
 Three things this plan is built on that you should push back on if wrong.
 
-**1. This is a supporting surface, not the product.** `PRODUCT_VISION.md`
-says the product is thesis monitoring. A fundamentals page earns its place by
-being *where the reader looks up the company* when a filing lands — so it links
-tightly into the feed, the watchlist and (later) the thesis panel. It must not
+**1. This is a supporting surface, not the product.** A fundamentals page
+earns its place by being *where the reader looks up the company* when a filing
+lands — so it links tightly into the feed and the watchlist. It must not
 grow its own roadmap. Each phase below ships something usable on its own so the
 build can stop at any phase boundary without leaving debris.
 
@@ -118,8 +117,7 @@ Interaction rules we copy exactly:
 - **Units toggle** per table: `$ Mn` default, `$ Bn` optional; per-share values in `$`.
 - **Search is the home page.** Typeahead, keyboard first, ticker or name.
 - **Public.** Reading needs no account (screener gates only saved screens and
-  notes behind login). Accounts add: remembered ratio grid, watchlist link,
-  later thesis notes.
+  notes behind login). Accounts add: remembered ratio grid, watchlist link.
 
 ### 2.2 Row definitions (screener row → FMP standardized field)
 
@@ -223,7 +221,7 @@ on Equity (average over the window; last cell = latest FY).
 | Credit ratings | Moody's/S&P ratings are not available on any plan we'd pay for | Dropped. Slot stays empty rather than showing something worse. |
 | Concalls: transcript / notes / PPT | Investor PPTs are not centrally filed in the US | Earnings-call transcripts (FMP, higher plan only — see 6). PPT link dropped. |
 | Bank / NBFC layout (Revenue, Interest, Financing Profit, Financing Margin %) | Same problem here: banks and insurers don't fit Sales/Expenses/OPM | Phase 4: a `bank` row set keyed on SIC 6000–6299 and FMP industry. Phase 1 renders them with the standard rows and a visible "Financial-company layout coming" note rather than silently wrong OPM figures. |
-| Notes per company (login) | — | Not now. This is the natural home for thesis capture later (`PRODUCT_VISION.md` step 1) — one free-text "why I own this" on the company page. Out of this plan's scope. |
+| Notes per company (login) | — | Not now. Out of this plan's scope. |
 | Screens / query builder | Explicitly not wanted | Out. |
 
 ---
@@ -456,8 +454,7 @@ against ~50 hand-checked companies.
 Bank/insurer row layout; earnings-call transcripts (plan-dependent); an
 as-reported statement view; SEC XBRL cross-check job that flags FMP
 discrepancies; a feed hook so "Q3 results out" for a followed company lands
-in the reader's updates (product decision — this touches the thesis judge's
-"no financial-statement parsing" rule and needs its own write-up).
+in the reader's updates (product decision; needs its own write-up).
 
 ---
 
