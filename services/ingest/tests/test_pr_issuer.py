@@ -6,6 +6,7 @@ from press_release.issuer import (
     build_ticker_index,
     extract_tickers,
     is_blocklisted,
+    names_company,
     normalize_company_name,
     resolve_issuer,
 )
@@ -145,3 +146,21 @@ def test_unresolvable_ticker(ticker_index):
     company, kind = resolve_issuer(ticker_index, ["ZZZZ"], "Some Co", "h", "b")
     assert company is None
     assert kind == "none"
+
+
+# ── names_company ─────────────────────────────────────────────────────────
+
+def test_names_company_ignores_product_codes():
+    """Oct 22 2026: Eos SENOLYTIX's release about its drug PTC-2105, tagged
+    PTC by FMP, verified against PTC Inc. on the code's first half."""
+    headline = ("Eos SENOLYTIX Presents Late-Life Survival and Healthspan Data for "
+                "Mitochondria-Targeted Geropeptide PTC-2105")
+    body = ("SAN DIEGO, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, Inc. announced "
+            "new preclinical data for its lead candidate PTC\u20112105 in naturally aged mice.")
+    assert not names_company("ptc", headline, body)
+
+
+def test_names_company_still_matches_the_name_itself():
+    body = "BOSTON, Oct. 19, 2026 (GLOBE NEWSWIRE) -- PTC today announced its fiscal 2026 results date."
+    assert names_company("ptc", "PTC to Announce Fourth Fiscal Quarter Results", body)
+    assert names_company("ptc", "PTC Launches PTC Jetstream", "PTC-2105 aside, PTC said.")

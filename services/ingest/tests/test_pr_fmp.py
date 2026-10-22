@@ -414,6 +414,31 @@ def test_cut_off_teaser_passes_once_the_article_loads():
     assert fetch.call_args.kwargs["html"] is True
 
 
+def test_metadata_tag_matching_only_a_product_code_is_dropped():
+    """Oct 22 2026: Eos SENOLYTIX (private) on its drug PTC-2105, tagged PTC
+    by FMP, published under PTC Inc."""
+    index = build_ticker_index({"0000857005": {"ticker": "PTC", "name": "PTC INC."}})
+    headline = ("Eos SENOLYTIX Presents Late-Life Survival and Healthspan Data for "
+                "Mitochondria-Targeted Geropeptide PTC-2105 at the 17th World Congress "
+                "on Targeting Mitochondria")
+    page = ("<html><body><p>SAN DIEGO, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, "
+            "Inc. today announced new preclinical data for its lead candidate PTC-2105, "
+            "a mitochondria-targeted geropeptide, showing significant survival and "
+            "healthspan benefits in naturally aged mice. The company also launched an "
+            "interactive webpage that lets the public follow the longest-surviving mouse "
+            "in its studies, nicknamed Speedy.</p></body></html>").encode()
+    release = _release(
+        symbol="PTC", publisher="GlobeNewswire", site="globenewswire.com",
+        url="https://www.globenewswire.com/news-release/2026/10/22/3386267/0/en/eos.html",
+        title=headline, text="SAN DIEGO, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, Inc.")
+    counters = pipeline._new_counters()
+    with patch("press_release.feeds.fetch_pr_url", return_value=page), \
+            patch.object(materiality, "_chat_json") as chat:
+        assert pipeline.process_release(release, index, [], counters) is None
+    chat.assert_not_called()
+    assert counters["issuer_fail"] == 1
+
+
 def test_release_without_a_wire_dateline_is_found_by_its_headline():
     """Oct 13 2026: Tower Semiconductor's GlobeNewswire page prints no
     "(GLOBE NEWSWIRE)" marker; the article text was discarded."""

@@ -203,6 +203,11 @@ def is_blocklisted(headline: str, body: str) -> str | None:
     return None
 
 
+# The hyphen inside an alphanumeric code — "PTC-2105", "ABC‑123" — dropped
+# before names_company normalizes punctuation to spaces.
+_PRODUCT_CODE_RE = re.compile(r"(?<=[A-Za-z])[-\u2010\u2011\u2013](?=\d)")
+
+
 def names_company(norm_company: str, headline: str, body: str) -> bool:
     """Does the release text name the company? The check for a release
     whose ticker came only from metadata (FMP's symbol) with nothing else
@@ -210,7 +215,12 @@ def names_company(norm_company: str, headline: str, body: str) -> bool:
     filed under ticker EV) names some other organization throughout."""
     if not norm_company:
         return False
-    text = " " + normalize_company_name(f"{headline} {body[:_SCAN_CHARS]}") + " "
+    raw = f"{headline} {body[:_SCAN_CHARS]}"
+    # Product codes are one word, not a name followed by a number: Eos
+    # SENOLYTIX's drug "PTC-2105" normalized to "ptc 2105" and verified
+    # FMP's PTC tag against PTC Inc.'s name (Oct 22 2026).
+    raw = _PRODUCT_CODE_RE.sub("", raw)
+    text = " " + normalize_company_name(raw) + " "
     if f" {norm_company} " in text:
         return True
     # SEC names are often longer than the name a release uses

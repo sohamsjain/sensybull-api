@@ -70,18 +70,27 @@ Produce a JSON object with these fields:
    by a law firm, investor, fund, research shop, industry group, partner,
    or any other third party — even when the release is about the subject
    company. Law-firm shareholder alerts and class-action notices are
-   ALWAYS false.
+   ALWAYS false. The ticker comes from an automated tagger and is
+   sometimes wrong: it can latch onto a product code ("PTC-2105" is not
+   PTC Inc.), a company merely mentioned, or a similar name. If the
+   organization that issued the release is not the subject company —
+   including a private company, a merger counterparty or a partner —
+   answer false.
 
-2. "summary" — 2-4 sentences about the subject company: what is
+2. "issuer" — the name of the organization that issued the release,
+   as the release itself states it (the dateline subject or the
+   "About" section).
+
+3. "summary" — 2-4 sentences about the subject company: what is
    happening, counterparties, key economics (amounts, share counts,
    prices), and current status. Flowing prose, not bullets.
 
-3. "primary_event_type" — the single most investor-relevant label from:
+4. "primary_event_type" — the single most investor-relevant label from:
    [{_EVENT_TYPES_STR}]
 
-4. "event_types" — 1 to 3 labels from the same list (including the primary).
+5. "event_types" — 1 to 3 labels from the same list (including the primary).
 
-5. "deal_terms" — flat object of key-value pairs where stated:
+6. "deal_terms" — flat object of key-value pairs where stated:
    "counterparty", "deal_value", "share_count", "price_per_share",
    "premium", "consideration_type", "deal_status", "expected_close",
    "deal_type". Omit fields the text does not state.
@@ -94,16 +103,16 @@ Produce a JSON object with these fields:
    "Cash", "SPAC Merger"), keeping acronyms and proper names as they
    are spelled. Figures stay as written ("$11.5B", "45%").
 
-6. "significance" — "High" = potential trade setup (M&A, bankruptcy,
+7. "significance" — "High" = potential trade setup (M&A, bankruptcy,
    major regulatory/clinical outcome, material deal). "Medium" = notable
    but not immediately tradeable (leadership change, debt raise,
    earnings). "Low" = routine.
 
-7. "sentiment" — "Positive", "Negative", "Neutral", or "Mixed".
+8. "sentiment" — "Positive", "Negative", "Neutral", or "Mixed".
 
-8. "investor_takeaway" — one sentence: the "so what" for a PM.
+9. "investor_takeaway" — one sentence: the "so what" for a PM.
 
-9. "catalysts" — [{{"date": "YYYY-MM-DD" or null, "event": "..."}}] for
+10. "catalysts" — [{{"date": "YYYY-MM-DD" or null, "event": "..."}}] for
    upcoming dates stated in the release. Omit if none.
 
 {VOICE_RULES}
@@ -125,8 +134,8 @@ def _build_user_message(headline: str, body_text: str, company_name: str,
         f"Subject company: {company_name}\n"
         f"Ticker: {ticker}\n"
         f"Published: {published}\n\n"
-        f"--- Press release headline (the company's own words) ---\n{headline}\n\n"
-        f"--- Press release body (the company's own words) ---\n{body}"
+        f"--- Press release headline ---\n{headline}\n\n"
+        f"--- Press release body ---\n{body}"
     )
 
 
@@ -148,7 +157,9 @@ def classify_release(headline: str, body_text: str, company_name: str,
     if data.get("insufficient_content"):
         return Drop("llm_insufficient_content")
     if not data.get("issued_by_company"):
-        return Drop("llm_not_first_party")
+        issuer = str(data.get("issuer") or "").strip()
+        return Drop(f"llm_not_first_party (issuer {issuer!r})" if issuer
+                    else "llm_not_first_party")
 
     valid_map = {t.lower(): t for t in EVENT_TYPES}
     raw_primary = data.get("primary_event_type", "")
