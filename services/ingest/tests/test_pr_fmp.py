@@ -414,6 +414,28 @@ def test_cut_off_teaser_passes_once_the_article_loads():
     assert fetch.call_args.kwargs["html"] is True
 
 
+# FMP's row for it, verbatim
+_EOS_TEASER = (
+    "In naturally aged mice treated from 80 weeks of age and followed until natural d"
+    "eath, once-weekly PTC-2105 (25 mg/kg) significantly increased overall survival v"
+    "ersus saline (log-rank p = 0.0142) “Speedy,” a PTC-2105-treated mouse now more t"
+    "han 167 weeks old, has outlived every saline-treated negative control in his stu"
+    "dy by more than 20% and remains active day and night New “Team Speedy” webpage, "
+    "launching today at eossenolytix.com/team-speedy, invites the public to watch Spe"
+    "edy, predict how far he will go, and sign up for milestone alerts BERLIN and HOU"
+    "STON, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, Inc. (“Eos” or the “Compa"
+    "ny”) a biotechnology company developing mitochondria-targeted geropeptides to im"
+    "prove healthspan, today presented new preclinical survival, healthspan and mecha"
+    "nism-of-action data for its lead candidate, PTC-2105, in an Industry Keynote Add"
+    "ress at the 17th World Congress on Targeting Mitochondria 2026 in Berlin. The ke"
+    "ynote, “Building on the Foundation of Four: Advancing Mitochondrial-Targeted Ger"
+    "opeptide Medicine,” delivered by Dr. Kevin Slawin, Founder and CEO of Eos SENOLY"
+    "TIX, acknowledged the contribution of Dr. Hazel Szeto, who with Dr. Peter Schill"
+    "er co-discovered the four amino acid peptide, SS-31, (“elamipretide”), the first"
+    " FDA-approved therapeutic that directly targets mitochondria."
+)
+
+
 def test_metadata_tag_matching_only_a_product_code_is_dropped():
     """Oct 22 2026: Eos SENOLYTIX (private) on its drug PTC-2105, tagged PTC
     by FMP, published under PTC Inc."""
@@ -421,22 +443,27 @@ def test_metadata_tag_matching_only_a_product_code_is_dropped():
     headline = ("Eos SENOLYTIX Presents Late-Life Survival and Healthspan Data for "
                 "Mitochondria-Targeted Geropeptide PTC-2105 at the 17th World Congress "
                 "on Targeting Mitochondria")
-    page = ("<html><body><p>SAN DIEGO, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, "
-            "Inc. today announced new preclinical data for its lead candidate PTC-2105, "
-            "a mitochondria-targeted geropeptide, showing significant survival and "
-            "healthspan benefits in naturally aged mice. The company also launched an "
-            "interactive webpage that lets the public follow the longest-surviving mouse "
-            "in its studies, nicknamed Speedy.</p></body></html>").encode()
+    page = ("<html><body><p>" + _EOS_TEASER + "</p><p>About Eos SENOLYTIX: Eos "
+            "SENOLYTIX, Inc. is a privately held biotechnology company developing "
+            "mitochondria-targeted geropeptides to improve healthspan.</p></body></html>").encode()
     release = _release(
         symbol="PTC", publisher="GlobeNewswire", site="globenewswire.com",
         url="https://www.globenewswire.com/news-release/2026/10/22/3386267/0/en/eos.html",
-        title=headline, text="SAN DIEGO, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, Inc.")
+        title=headline, text=_EOS_TEASER)
     counters = pipeline._new_counters()
     with patch("press_release.feeds.fetch_pr_url", return_value=page), \
             patch.object(materiality, "_chat_json") as chat:
         assert pipeline.process_release(release, index, [], counters) is None
     chat.assert_not_called()
     assert counters["issuer_fail"] == 1
+    # Article offline: the teaser can't verify the tag, so it waits for the
+    # article (retried, then given up) — never published as PTC
+    with patch.object(materiality, "_chat_json") as chat, \
+            pytest.raises(pipeline.ArticleUnavailable):
+        pipeline.process_release(_release(
+            symbol="PTC", publisher="GlobeNewsWire", site="globenewswire.com",
+            url=release.url, title=headline, text=_EOS_TEASER), index, [], counters)
+    chat.assert_not_called()
 
 
 def test_release_without_a_wire_dateline_is_found_by_its_headline():
