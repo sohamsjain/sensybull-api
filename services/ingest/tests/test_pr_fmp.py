@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from press_release import fmp, materiality, pipeline
-from press_release.article import extract_release_text
+from press_release.article import extract_issuer, extract_release_text
 from press_release.issuer import build_ticker_index, extract_tickers
 from press_release.language import is_english
 
@@ -464,6 +464,61 @@ def test_metadata_tag_matching_only_a_product_code_is_dropped():
             symbol="PTC", publisher="GlobeNewsWire", site="globenewswire.com",
             url=release.url, title=headline, text=_EOS_TEASER), index, [], counters)
     chat.assert_not_called()
+
+
+def _gnw_page(source: str, body: str) -> bytes:
+    """A GlobeNewswire article page's shape: headline, then the timestamp
+    and the "Source:" credit linking to the issuer's profile, then the
+    release."""
+    return ("<html><body><h1>Headline</h1><p><span>October 22, 2026 08:00 ET</span>"
+            f" | <span>Source: <a href='/en/search/organization/x'>{source}</a></span></p>"
+            "<div><button>Follow</button></div>"
+            f"<div><p>{body}</p><p>Source: Company filings</p></div></body></html>").encode()
+
+
+@pytest.mark.parametrize("page,issuer", [
+    (_gnw_page("Eos SENOLYTIX, Inc.", "BERLIN (GLOBE NEWSWIRE) -- x").decode(), "Eos SENOLYTIX, Inc."),
+    # The name in its own block rather than a link
+    ("<p>Oct 22, 2026 08:00 ET | Source:</p><div>Johnson &amp; Johnson</div>"
+     "<p>NEW BRUNSWICK (GLOBE NEWSWIRE) -- x</p>", "Johnson & Johnson"),
+    # A "Source:" inside the release is a data credit, not the issuer
+    ("<p>BERLIN (GLOBE NEWSWIRE) -- x</p><p>Source: <a>Company filings</a></p>", ""),
+])
+def test_gnw_source_credit_is_the_issuer(page, issuer):
+    assert extract_issuer(page) == issuer
+
+
+def test_gnw_source_credit_rejects_a_mistagged_release():
+    """The Eos SENOLYTIX release again, with a body that mentions PTC by
+    name: the page's own "Source:" credit rejects the tag outright."""
+    index = build_ticker_index({"0000857005": {"ticker": "PTC", "name": "PTC INC."}})
+    body = ("BERLIN and HOUSTON, Oct. 22, 2026 (GLOBE NEWSWIRE) -- Eos SENOLYTIX, Inc. "
+            "today presented new preclinical survival data for its lead candidate. " * 3
+            + "The study ran on software from PTC.")
+    release = _release(symbol="PTC", publisher="GlobeNewsWire", site="globenewswire.com",
+                       url="https://www.globenewswire.com/news-release/2026/10/22/3386267/0/en/eos.html",
+                       title="Eos SENOLYTIX Presents Late-Life Survival Data", text=body[:200])
+    counters = pipeline._new_counters()
+    with patch("press_release.feeds.fetch_pr_url", return_value=_gnw_page("Eos SENOLYTIX, Inc.", body)), \
+            patch.object(materiality, "_chat_json") as chat:
+        assert pipeline.process_release(release, index, [], counters) is None
+    chat.assert_not_called()
+    assert release.issuer_name == "Eos SENOLYTIX, Inc."
+    assert counters["issuer_fail"] == 1
+
+
+def test_gnw_source_credit_matching_the_company_verifies_it():
+    body = ("HOUSTON, Oct. 10, 2026 (GLOBE NEWSWIRE) -- To help support customers "
+            "impacted by the storm, crews are heading out to restore outages. " * 4)
+    release = _release(publisher="GlobeNewsWire", site="globenewswire.com",
+                       url="https://www.globenewswire.com/news-release/2026/10/10/1/0/en/cnp.html",
+                       text=body[:200])
+    counters = pipeline._new_counters()
+    with patch("press_release.feeds.fetch_pr_url", return_value=_gnw_page("CenterPoint Energy, Inc.", body)), \
+            patch.object(materiality, "_chat_json", return_value=_llm()):
+        event = pipeline.process_release(release, _INDEX, [], counters)
+    assert event is not None and event.issuer_name == "CenterPoint Energy, Inc."
+    assert counters["issuer_unverified"] == 0
 
 
 def test_release_without_a_wire_dateline_is_found_by_its_headline():

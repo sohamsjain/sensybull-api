@@ -42,12 +42,32 @@ _FOOTER_RE = re.compile(
 _PROVIDED_BY_RE = re.compile(r"News provided by\s*\n\s*([^\n]{2,120})", re.IGNORECASE)
 
 
+# GlobeNewswire credits it under the headline: "October 22, 2026 08:00 ET |
+# Source: Eos SENOLYTIX, Inc." (the name links to the org's profile). FMP
+# tags rows by ticker matching — it filed that release, about the drug
+# PTC-2105, under PTC — so this is the field that catches its mis-tags.
+_GNW_SOURCE_LINK_RE = re.compile(
+    r"Source:\s*(?:<(?!a\b)[^>]*>\s*)*<a\b[^>]*>([^<]{2,120})</a>", re.IGNORECASE)
+_GNW_SOURCE_RE = re.compile(r"(?:^|\|)[^\S\n]*Source:\s*([^\n|]{2,120})",
+                            re.IGNORECASE | re.MULTILINE)
+
+
 def extract_issuer(page_html: str) -> str:
     """The page's issuing-organization credit, or "" when it has none."""
-    m = _PROVIDED_BY_RE.search(strip_html(page_html))
-    if not m:
-        return ""
-    return m.group(1).strip().rstrip("→ ").strip()
+    text = strip_html(page_html)
+    m = _PROVIDED_BY_RE.search(text)
+    if m:
+        return m.group(1).strip().rstrip("→ ").strip()
+    # Only the page header: a "Source:" line inside the release (a table's
+    # data credit) says nothing about who issued it. The linked name first,
+    # so a "Follow" button beside it isn't read as part of it.
+    dateline = _DATELINE_RE.search(page_html)
+    m = _GNW_SOURCE_LINK_RE.search(page_html, 0, dateline.start() if dateline else len(page_html))
+    if m:
+        return " ".join(strip_html(m.group(1)).split())
+    dateline = _DATELINE_RE.search(text)
+    m = _GNW_SOURCE_RE.search(text, 0, dateline.start() if dateline else len(text))
+    return m.group(1).strip() if m else ""
 
 
 # A headline-anchored span shorter than this is page chrome, not a release

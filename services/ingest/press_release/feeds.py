@@ -258,7 +258,8 @@ def fetch_release_body(release: PRRelease) -> str:
     From a fetched page only the release itself is kept (dateline to source
     footer, see article.py) — the whole page is mostly navigation, which
     would crowd the release out of the ticker scan and the LLM prompt.
-    The page's issuer credit (PR Newswire's "News provided by") fills
+    The page's issuer credit (PR Newswire's "News provided by",
+    GlobeNewswire's "Source:") fills
     release.issuer_name when the source gave none.
     """
     inline = strip_html(release.body_html).strip() if release.body_html else ""
